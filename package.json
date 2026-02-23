@@ -1,0 +1,17 @@
+{
+  "name": "stellar-websigner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Static client-only Stellar (Ed25519) signer and verifier",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "selftest": "node scripts/selftest.mjs",
+    "vectors": "node scripts/generate-vectors.mjs",
+    "check": "npm run selftest && npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.3"
+  }
+}
