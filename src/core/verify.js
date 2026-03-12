@@ -1,11 +1,12 @@
-import { HASH_ALG, MODE, SIGNATURE_SCHEMA } from './constants.js';
 import {
-  base64ToBytes,
-  bytesEqual,
-  sanitizeBase64,
-} from './bytes.js';
+  HASH_ALG,
+  PAYLOAD_TYPE,
+  PROOF_TYPE,
+  SIGNATURE_SCHEME,
+  SIGNATURE_SCHEMA_V2,
+} from './constants.js';
+import { bytesEqual } from './bytes.js';
 import { decodeEd25519PublicKey, encodeEd25519PublicKey } from './strkey.js';
-import { verifyBytesWithPublic } from './ed25519.js';
 import {
   assertSafeManageDataEnvelope,
   computeTransactionHash,
@@ -13,27 +14,51 @@ import {
   parseTransactionEnvelope,
 } from './xdr.js';
 import {
-  buildDeterministicMessage,
-  computeSep53MessageHash,
   digestForHashAlgorithm,
   hashAlgorithmFromManageDataName,
   normalizeHashAlgorithmName,
   parseHashEntries,
 } from './message.js';
-import { knownNetworkPassphrases } from './sep7.js';
+import { knownNetworkPassphrases, networkHintFromPassphrase } from './network.js';
+import { parseSep53Signature, readInputContextBytes, verifySep53Message } from './sep53.js';
+
+const SUPPORTED_PROFILES = Object.freeze([
+  Object.freeze({
+    id: 'sep53-message',
+    proofType: PROOF_TYPE.SEP53_MESSAGE,
+    payloadType: PAYLOAD_TYPE.RAW_BYTES,
+    signatureScheme: SIGNATURE_SCHEME.SEP53_SHA256_ED25519,
+  }),
+  Object.freeze({
+    id: 'xdr-envelope',
+    proofType: PROOF_TYPE.XDR_ENVELOPE,
+    payloadType: PAYLOAD_TYPE.DETACHED_DIGESTS,
+    signatureScheme: SIGNATURE_SCHEME.TX_ENVELOPE_ED25519,
+  }),
+]);
 
 export async function verifyDetachedSignature({ signatureDoc, inputContext, expectedSigner = '' }) {
   const report = createReport();
+  const emptyChecked = {
+    mode: '',
+    schema: '',
+    proofType: '',
+    payloadType: '',
+    signatureScheme: '',
+    hashes: [],
+  };
 
   if (!signatureDoc || typeof signatureDoc !== 'object') {
     report.fail('Malformed signature document: expected JSON object.');
-    return report.finish('', []);
+    return report.finish({ signer: '', checked: emptyChecked });
   }
 
-  if (signatureDoc.schema !== SIGNATURE_SCHEMA) {
+  const schema = String(signatureDoc.schema || '').trim();
+  const isV2Schema = schema === SIGNATURE_SCHEMA_V2;
+  if (!isV2Schema) {
     report.fail(`Unsupported schema: ${String(signatureDoc.schema || '(missing)')}`);
   } else {
-    report.ok(`Schema accepted: ${SIGNATURE_SCHEMA}`);
+    report.ok(`Schema accepted: ${schema}`);
   }
 
   const signer = String(signatureDoc.signer || '').trim();
@@ -50,16 +75,29 @@ export async function verifyDetachedSignature({ signatureDoc, inputContext, expe
     report.fail(`Wrong signer: expected ${expectedSignerTrimmed}, got ${signer}.`);
   }
 
+  const proofType = String(signatureDoc.proofType || '').trim();
+  const payloadType = String(signatureDoc.payloadType || '').trim();
+  const signatureScheme = String(signatureDoc.signatureScheme || '').trim();
+  let recomputedEntries = [];
+  let checked = {
+    mode: '',
+    schema,
+    proofType,
+    payloadType,
+    signatureScheme,
+    hashes: [],
+  };
+
   let hashEntries;
   try {
     hashEntries = parseHashEntries(signatureDoc);
     report.ok(`Hash entries parsed: ${hashEntries.map((item) => item.alg).join(', ')}`);
   } catch (err) {
     report.fail(`Malformed hashes section: ${err.message}`);
-    return report.finish(signer, []);
+    return report.finish({ signer, checked });
   }
 
-  const recomputedEntries = [];
+  recomputedEntries = [];
   for (const entry of hashEntries) {
     const digest = digestForHashAlgorithm(inputContext.digests, entry.alg);
     const recomputed = {
@@ -77,17 +115,34 @@ export async function verifyDetachedSignature({ signatureDoc, inputContext, expe
     }
   }
 
-  const mode = String(signatureDoc.mode || '').trim();
-  if (mode === MODE.SEP53) {
-    await verifyLocalSignatureMode({
+  checked = {
+    mode: '',
+    schema,
+    proofType,
+    payloadType,
+    signatureScheme,
+    hashes: recomputedEntries.map((item) => ({ alg: item.alg, hex: item.hex })),
+  };
+
+  const profile = resolveSupportedProfile({ schema, proofType, payloadType, signatureScheme });
+  if (!profile) {
+    report.fail(
+      `Unsupported signature profile: ${proofType || '(missing)'} / ${payloadType || '(missing)'} / ${signatureScheme || '(missing)'}.`
+    );
+    return report.finish({ signer, checked });
+  }
+  report.ok(`Signature profile accepted: ${profile.id}.`);
+
+  if (profile.id === 'sep53-message') {
+    await verifyV2Sep53MessageSignatureMode({
       report,
       signatureDoc,
       signerPublicBytes,
       inputContext,
-      recomputedEntries,
+      checked,
     });
-  } else if (mode === MODE.SEP7_TX) {
-    await verifySep7SignatureMode({
+  } else if (profile.id === 'xdr-envelope') {
+    await verifyXdrProofMode({
       report,
       signatureDoc,
       signer,
@@ -95,59 +150,54 @@ export async function verifyDetachedSignature({ signatureDoc, inputContext, expe
       inputContext,
       recomputedEntries,
     });
-  } else {
-    report.fail(`Unsupported signature mode: ${mode || '(missing)'}`);
   }
 
-  return report.finish(signer, recomputedEntries);
+  return report.finish({ signer, checked });
 }
 
-async function verifyLocalSignatureMode({
+async function verifyV2Sep53MessageSignatureMode({
   report,
   signatureDoc,
   signerPublicBytes,
   inputContext,
-  recomputedEntries,
+  checked,
 }) {
-  const expectedMessage = buildDeterministicMessage({
-    type: inputContext.type,
-    fileName: inputContext.fileName,
-    fileSize: inputContext.fileSize,
-    hashEntries: recomputedEntries,
-  });
-
-  if (String(signatureDoc.message || '') !== expectedMessage) {
-    report.fail('Deterministic message mismatch: signed message differs from reconstructed input message.');
-  } else {
-    report.ok('Deterministic message matches reconstructed input.');
-  }
-
   let signatureBytes;
   try {
-    signatureBytes = base64ToBytes(String(signatureDoc.signatureB64 || ''));
-    if (signatureBytes.length !== 64) {
-      throw new Error(`Expected 64-byte signature, got ${signatureBytes.length}.`);
-    }
+    signatureBytes = parseSep53Signature(signatureDoc.signatureB64);
     report.ok('signatureB64 parsed successfully.');
   } catch (err) {
     report.fail(`Malformed signature: ${err.message}`);
     return;
   }
 
+  validateInputDescriptor({
+    report,
+    declaredInput: signatureDoc.input && typeof signatureDoc.input === 'object' ? signatureDoc.input : null,
+    inputContext,
+  });
+
+  let messageBytes;
+  try {
+    messageBytes = readInputContextBytes(inputContext);
+    report.ok(`Input bytes loaded for SEP-53 verification (${messageBytes.length} bytes).`);
+    checked.messageBytesLength = messageBytes.length;
+  } catch (err) {
+    report.fail(err.message);
+    return;
+  }
+
   if (!signerPublicBytes) return;
 
-  const message = String(signatureDoc.message || '');
-  const payload = await computeSep53MessageHash(message);
-
-  const ok = await verifyBytesWithPublic(signerPublicBytes, payload, signatureBytes);
+  const ok = await verifySep53Message({ publicKeyBytes: signerPublicBytes, messageBytes, signatureBytes });
   if (!ok) {
-    report.fail('SEP-53 signature verification failed.');
+    report.fail('SEP-53 content signature verification failed.');
   } else {
-    report.ok('SEP-53 signature verification passed.');
+    report.ok('SEP-53 content signature verification passed.');
   }
 }
 
-async function verifySep7SignatureMode({
+async function verifyXdrProofMode({
   report,
   signatureDoc,
   signer,
@@ -208,13 +258,11 @@ async function verifySep7SignatureMode({
     return;
   }
 
-  if (sourceAddress === signer) {
-    report.ok('signedXdr sourceAccount matches signer field.');
-  } else {
-    report.warn(
-      `signedXdr sourceAccount (${sourceAddress}) differs from signer (${signer}); accepting as off-chain signature.`
-    );
+  if (sourceAddress !== signer) {
+    report.fail(`signedXdr sourceAccount mismatch: signer=${signer}, sourceAccount=${sourceAddress}.`);
+    return;
   }
+  report.ok('signedXdr sourceAccount matches signer field.');
 
   if (safeOp.manageDataEntries.length === 0) {
     report.fail('signedXdr has no ManageData entries.');
@@ -291,6 +339,13 @@ async function verifySep7SignatureMode({
     report.fail('network.passphrase is missing.');
     return;
   }
+  const declaredHint = String(signatureDoc.network?.hint || '').trim();
+  const expectedHint = networkHintFromPassphrase(passphrase);
+  if (declaredHint && declaredHint !== expectedHint) {
+    report.warn(`network.hint mismatch: expected ${expectedHint}, got ${declaredHint}.`);
+  } else {
+    report.ok(`Network hint accepted: ${declaredHint || expectedHint}.`);
+  }
 
   const txHash = await computeTransactionHash(parsed.txXdr, passphrase);
   const match = await findValidDecoratedSignature(parsed.signatures, signerPublicBytes, txHash);
@@ -331,13 +386,11 @@ function createReport() {
     warnings.push(message);
   }
 
-  function finish(signer, recomputedEntries) {
+  function finish({ signer, checked }) {
     return {
       valid: errors.length === 0,
       signer,
-      checked: {
-        hashes: recomputedEntries.map((item) => ({ alg: item.alg, hex: item.hex })),
-      },
+      checked,
       details,
       errors,
       warnings,
@@ -367,6 +420,11 @@ export function diagnosticsForDisplay(report) {
   const lines = [];
   lines.push(`Result: ${report.valid ? 'VALID' : 'INVALID'}`);
   lines.push(`Signer: ${report.signer || '-'}`);
+  lines.push(`Schema: ${report.checked?.schema || '-'}`);
+  lines.push(`Proof Type: ${report.checked?.proofType || '-'}`);
+  lines.push(`Payload Type: ${report.checked?.payloadType || '-'}`);
+  lines.push(`Signature Scheme: ${report.checked?.signatureScheme || '-'}`);
+  lines.push(`Mode: ${report.checked?.mode || '-'}`);
   if (Array.isArray(report.checked?.hashes) && report.checked.hashes.length > 0) {
     lines.push('Hashes:');
     for (const item of report.checked.hashes) {
@@ -375,17 +433,26 @@ export function diagnosticsForDisplay(report) {
   } else {
     lines.push('Hashes: -');
   }
+  if (Number.isInteger(report.checked?.messageBytesLength)) {
+    lines.push(`Message Bytes: ${report.checked.messageBytesLength}`);
+  }
   lines.push('');
   lines.push(...report.details);
   return lines.join('\n');
 }
 
-export function sameDigestBytes(a, b) {
-  return bytesEqual(a, b);
+export function signatureDocRequiresInputBytes(signatureDoc) {
+  const profile = resolveSupportedProfile({
+    schema: String(signatureDoc?.schema || '').trim(),
+    proofType: String(signatureDoc?.proofType || '').trim(),
+    payloadType: String(signatureDoc?.payloadType || '').trim(),
+    signatureScheme: String(signatureDoc?.signatureScheme || '').trim(),
+  });
+  return profile?.id === 'sep53-message';
 }
 
-export function sameBase64(a, b) {
-  return sanitizeBase64(String(a || '')) === sanitizeBase64(String(b || ''));
+export function sameDigestBytes(a, b) {
+  return bytesEqual(a, b);
 }
 
 function parseDeclaredManageDataEntries(manageDataSection) {
@@ -435,8 +502,40 @@ function parseDeclaredManageDataEntries(manageDataSection) {
   });
 }
 
+function validateInputDescriptor({ report, declaredInput, inputContext }) {
+  if (declaredInput?.type === 'file' || declaredInput?.type === 'text') {
+    report.ok(`Input descriptor accepted: ${declaredInput.type}.`);
+    if (declaredInput.type !== inputContext.type) {
+      report.fail(`Input type mismatch: signature expects ${declaredInput.type}, received ${inputContext.type}.`);
+    }
+    if (Number.isInteger(declaredInput.size) && declaredInput.size !== inputContext.fileSize) {
+      report.fail(`Input size mismatch: signature expects ${declaredInput.size}, received ${inputContext.fileSize}.`);
+    }
+    return;
+  }
+
+  if (declaredInput) {
+    report.warn('Signature input descriptor is present but has unsupported type metadata.');
+    return;
+  }
+
+  report.warn('Signature input descriptor is missing.');
+}
+
 function expectedDigestHexLength(alg) {
   const normalized = normalizeHashAlgorithmName(alg);
   if (normalized === HASH_ALG.SHA256) return 64;
   return 128;
+}
+
+function resolveSupportedProfile({ schema, proofType, payloadType, signatureScheme }) {
+  if (schema !== SIGNATURE_SCHEMA_V2) return null;
+  return (
+    SUPPORTED_PROFILES.find(
+      (item) =>
+        item.proofType === proofType &&
+        item.payloadType === payloadType &&
+        item.signatureScheme === signatureScheme
+    ) || null
+  );
 }

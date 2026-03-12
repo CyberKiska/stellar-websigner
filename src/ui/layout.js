@@ -14,8 +14,17 @@ export function setupLayout(state) {
   const toastContainer = byId('toast-container');
 
   function activateTab(tabName) {
-    navItems.forEach((item) => item.classList.toggle('active', item.dataset.tab === tabName));
-    panels.forEach((panel) => panel.classList.toggle('active', panel.id === `tab-${tabName}`));
+    navItems.forEach((item) => {
+      const isActive = item.dataset.tab === tabName;
+      item.classList.toggle('active', isActive);
+      item.setAttribute('aria-selected', String(isActive));
+      item.tabIndex = isActive ? 0 : -1;
+    });
+    panels.forEach((panel) => {
+      const isActive = panel.id === `tab-${tabName}`;
+      panel.classList.toggle('active', isActive);
+      panel.setAttribute('aria-hidden', String(!isActive));
+    });
   }
 
   navItems.forEach((item) => {
@@ -29,11 +38,20 @@ export function setupLayout(state) {
     const toast = document.createElement('div');
     toast.className = `toast ${type || 'info'}`;
     toast.textContent = message;
+    toast.setAttribute('role', type === 'error' || type === 'warning' ? 'alert' : 'status');
+    toast.tabIndex = 0;
     toastContainer.append(toast);
 
-    setTimeout(() => {
+    const dismiss = () => {
+      if (!toast.isConnected || toast.classList.contains('fade-out')) return;
       toast.classList.add('fade-out');
       setTimeout(() => toast.remove(), 220);
+    };
+
+    toast.addEventListener('click', dismiss, { once: true });
+
+    setTimeout(() => {
+      dismiss();
     }, 3500);
   });
 
@@ -65,18 +83,21 @@ export function setupLayout(state) {
     }
 
     if (seedLoaded) {
-      statusDot.className = 'status-indicator warning';
+      statusDot.className = 'status-indicator armed';
+      statusDot.setAttribute('aria-label', 'System status: Armed');
       statusText.textContent = 'Armed';
       return;
     }
 
     if (signer) {
-      statusDot.className = 'status-indicator secure';
+      statusDot.className = 'status-indicator verify-ready';
+      statusDot.setAttribute('aria-label', 'System status: Verify-Ready');
       statusText.textContent = 'Verify-Ready';
       return;
     }
 
-    statusDot.className = 'status-indicator';
+    statusDot.className = 'status-indicator ready';
+    statusDot.setAttribute('aria-label', 'System status: Ready');
     statusText.textContent = 'Ready';
   }
 
@@ -85,6 +106,7 @@ export function setupLayout(state) {
 
   selfTestBtn.addEventListener('click', async () => {
     selfTestBtn.disabled = true;
+    selfTestBtn.textContent = 'Self-test...';
     showToast('info', 'Self-test started...');
     try {
       const report = await runSelfTest();
@@ -100,8 +122,12 @@ export function setupLayout(state) {
       showToast('error', `Self-test error: ${message}`);
     } finally {
       selfTestBtn.disabled = false;
+      selfTestBtn.textContent = 'Run Self-test';
     }
   });
+
+  const activeTab = Array.from(navItems).find((item) => item.classList.contains('active'))?.dataset.tab || 'keys';
+  activateTab(activeTab);
 
   return {
     activateTab,

@@ -85,15 +85,7 @@ export function friendlyError(error) {
 }
 
 export function setStatusBox(el, mode, text) {
-  el.classList.remove('valid', 'invalid', 'neutral');
+  el.classList.remove('valid', 'invalid', 'neutral', 'warning');
   el.classList.add(mode);
   el.textContent = text;
-}
-
-export function pickOriginDomain() {
-  const protocol = window.location.protocol;
-  if (protocol === 'http:' || protocol === 'https:') {
-    return window.location.hostname;
-  }
-  return '';
 }

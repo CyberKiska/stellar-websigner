@@ -63,17 +63,23 @@ export async function createFileInputContext(file, options = {}) {
   };
 }
 
-export async function createTextInputContext(text) {
+export async function createTextInputContext(text, options = {}) {
   const bytes = utf8ToBytes(String(text || ''));
-  const digests = await computeDigests(bytes);
-  return {
-    type: 'text',
-    fileName: '',
-    fileSize: bytes.length,
-    fileLastModified: 0,
-    bytes,
-    digests,
-  };
+  const fileSize = bytes.length;
+  const keepBytes = options.keepBytes === true;
+  try {
+    const digests = await computeDigests(bytes);
+    return {
+      type: 'text',
+      fileName: '',
+      fileSize,
+      fileLastModified: 0,
+      bytes: keepBytes ? bytes.slice() : new Uint8Array(0),
+      digests,
+    };
+  } finally {
+    wipeBytes(bytes);
+  }
 }
 
 async function readFileChunked(file, { chunkSize, onProgress }) {

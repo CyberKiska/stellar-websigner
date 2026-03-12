@@ -1,8 +1,9 @@
 import { bytesToBase64, hexToBytes, utf8ToBytes } from './bytes.js';
 import { derivePublicKeyFromSeed, generateKeypair, signatureHint, signBytesWithSeed } from './ed25519.js';
 import { computeDigests } from './hash.js';
-import { HASH_ALG, HASH_SELECTION, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
-import { createLocalDetachedSignature, createSep7DetachedSignature, createSep7Draft } from './signing.js';
+import { HASH_ALG, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
+import { createLocalSep53MessageSignature } from './signing.js';
+import { createXdrProofDraft, finalizeXdrProof } from './xdr-proof.js';
 import { encodeEd25519PublicKey, decodeEd25519PublicKey, decodeEd25519SecretSeed, encodeEd25519SecretSeed } from './strkey.js';
 import { verifyDetachedSignature } from './verify.js';
 import { computeTransactionHash, encodeSignedTxEnvelope } from './xdr.js';
@@ -11,25 +12,25 @@ function createResult(name, fn) {
   return { name, fn };
 }
 
-async function makeFileContext(name, bytes) {
+async function makeFileContext(name, bytes, options = {}) {
   const digests = await computeDigests(bytes);
   return {
     type: 'file',
     fileName: name,
     fileSize: bytes.length,
-    bytes,
+    bytes: options.keepBytes === false ? new Uint8Array(0) : bytes,
     digests,
   };
 }
 
-async function makeTextContext(text) {
+async function makeTextContext(text, options = {}) {
   const bytes = utf8ToBytes(text);
   const digests = await computeDigests(bytes);
   return {
     type: 'text',
     fileName: '',
     fileSize: bytes.length,
-    bytes,
+    bytes: options.keepBytes === false ? new Uint8Array(0) : bytes,
     digests,
   };
 }
@@ -89,38 +90,23 @@ export async function runSelfTest() {
       }
     }),
 
-    createResult('sep53 sign/verify text (both hashes)', async () => {
-      const seed = hexToBytes('1111111111111111111111111111111111111111111111111111111111111111');
-      const textContext = await makeTextContext('offline ed25519 test text');
-      const signResult = await createLocalDetachedSignature({
+    createResult('v2 local content signature sign/verify text', async () => {
+      const seed = hexToBytes('1212121212121212121212121212121212121212121212121212121212121212');
+      const textContext = await makeTextContext('Strict SEP-53 text payload');
+
+      const signResult = await createLocalSep53MessageSignature({
         inputContext: textContext,
         seedBytes: seed,
         signerAddress: '',
-        hashSelection: HASH_SELECTION.BOTH,
       });
-      const verify = await verifyDetachedSignature({
-        signatureDoc: signResult.doc,
-        inputContext: textContext,
-      });
-      if (!verify.valid) {
-        throw new Error(`Expected VALID, got ${verify.summary}`);
+
+      if (signResult.doc.schema !== SIGNATURE_SCHEMA_V2) {
+        throw new Error(`Expected ${SIGNATURE_SCHEMA_V2}, got ${signResult.doc.schema}`);
       }
-    }),
-
-    createResult('sep53 sign/verify file (single hash)', async () => {
-      const seed = hexToBytes('2222222222222222222222222222222222222222222222222222222222222222');
-      const fileContext = await makeFileContext('doc.txt', utf8ToBytes('FIPS202 + RFC8032 deterministic test'));
-
-      const signResult = await createLocalDetachedSignature({
-        inputContext: fileContext,
-        seedBytes: seed,
-        signerAddress: '',
-        hashSelection: HASH_SELECTION.SHA3_512,
-      });
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
-        inputContext: fileContext,
+        inputContext: textContext,
       });
 
       if (!verify.valid) {
@@ -128,39 +114,81 @@ export async function runSelfTest() {
       }
     }),
 
-    createResult('sep53 verify stays valid when file name changes', async () => {
-      const seed = hexToBytes('2323232323232323232323232323232323232323232323232323232323232323');
-      const bytes = utf8ToBytes('same content different file name');
-      const signContext = await makeFileContext('original-name.bin', bytes);
-      const verifyContext = await makeFileContext('renamed-copy.bin', bytes);
+    createResult('v2 local content signature sign/verify file bytes', async () => {
+      const seed = hexToBytes('1313131313131313131313131313131313131313131313131313131313131313');
+      const fileContext = await makeFileContext('proof.bin', utf8ToBytes('Strict SEP-53 raw file bytes'));
 
-      const signResult = await createLocalDetachedSignature({
-        inputContext: signContext,
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: fileContext,
         seedBytes: seed,
         signerAddress: '',
-        hashSelection: HASH_SELECTION.BOTH,
       });
 
+      const verifyContext = await makeFileContext('renamed-proof.bin', utf8ToBytes('Strict SEP-53 raw file bytes'));
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
         inputContext: verifyContext,
       });
 
       if (!verify.valid) {
-        throw new Error(`Expected VALID for renamed file, got ${verify.summary}`);
+        throw new Error(`Expected VALID, got ${verify.summary}`);
       }
     }),
 
-    createResult('sep53 verify fails with wrong signer', async () => {
+    createResult('v2 local content signature verify fails with modified file bytes', async () => {
+      const seed = hexToBytes('1414141414141414141414141414141414141414141414141414141414141414');
+      const goodFileContext = await makeFileContext('proof.bin', utf8ToBytes('Strict SEP-53 original file bytes'));
+      const badFileContext = await makeFileContext('proof.bin', utf8ToBytes('Strict SEP-53 tampered file bytes'));
+
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: goodFileContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+
+      const verify = await verifyDetachedSignature({
+        signatureDoc: signResult.doc,
+        inputContext: badFileContext,
+      });
+
+      if (verify.valid) {
+        throw new Error('Expected INVALID for modified file bytes.');
+      }
+      if (!verify.errors.some((line) => line.includes('SEP-53 content signature verification failed'))) {
+        throw new Error(`Expected strict SEP-53 verification failure, got: ${verify.errors.join(' | ')}`);
+      }
+    }),
+
+    createResult('v2 local content signature serializes to canonical json', async () => {
+      const seed = hexToBytes('1515151515151515151515151515151515151515151515151515151515151515');
+      const textContext = await makeTextContext('canonical json payload');
+
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: textContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+
+      if (!signResult.json.endsWith('\n')) {
+        throw new Error('Expected canonical json output to end with newline.');
+      }
+      if (signResult.json.includes('  "')) {
+        throw new Error('Expected canonical json output to be minified.');
+      }
+      if (!signResult.displayJson.includes('\n  "')) {
+        throw new Error('Expected display json output to be pretty-printed.');
+      }
+    }),
+
+    createResult('v2 local content signature verify fails with wrong signer', async () => {
       const seedA = hexToBytes('6666666666666666666666666666666666666666666666666666666666666666');
       const seedB = hexToBytes('7777777777777777777777777777777777777777777777777777777777777777');
       const textContext = await makeTextContext('wrong signer test text');
 
-      const signResult = await createLocalDetachedSignature({
+      const signResult = await createLocalSep53MessageSignature({
         inputContext: textContext,
         seedBytes: seedA,
         signerAddress: '',
-        hashSelection: HASH_SELECTION.BOTH,
       });
 
       const wrongSigner = encodeEd25519PublicKey(await derivePublicKeyFromSeed(seedB));
@@ -178,16 +206,15 @@ export async function runSelfTest() {
       }
     }),
 
-    createResult('sep53 verify fails with wrong text input', async () => {
+    createResult('v2 local content signature verify fails with wrong text input', async () => {
       const seed = hexToBytes('8888888888888888888888888888888888888888888888888888888888888888');
       const goodTextContext = await makeTextContext('original text payload');
       const badTextContext = await makeTextContext('tampered text payload');
 
-      const signResult = await createLocalDetachedSignature({
+      const signResult = await createLocalSep53MessageSignature({
         inputContext: goodTextContext,
         seedBytes: seed,
         signerAddress: '',
-        hashSelection: HASH_SELECTION.BOTH,
       });
 
       const verify = await verifyDetachedSignature({
@@ -198,21 +225,20 @@ export async function runSelfTest() {
       if (verify.valid) {
         throw new Error('Expected INVALID for wrong text input.');
       }
-      if (!verify.errors.some((line) => line.includes('Digest mismatch'))) {
-        throw new Error(`Expected digest mismatch diagnostic for text, got: ${verify.errors.join(' | ')}`);
+      if (!verify.errors.some((line) => line.includes('SEP-53 content signature verification failed'))) {
+        throw new Error(`Expected SEP-53 verification failure for text, got: ${verify.errors.join(' | ')}`);
       }
     }),
 
-    createResult('sep53 verify fails with wrong file input', async () => {
+    createResult('v2 local content signature verify fails with wrong file input', async () => {
       const seed = hexToBytes('9999999999999999999999999999999999999999999999999999999999999999');
       const goodFileContext = await makeFileContext('doc.txt', utf8ToBytes('original file bytes'));
       const badFileContext = await makeFileContext('doc.txt', utf8ToBytes('modified file bytes'));
 
-      const signResult = await createLocalDetachedSignature({
+      const signResult = await createLocalSep53MessageSignature({
         inputContext: goodFileContext,
         seedBytes: seed,
         signerAddress: '',
-        hashSelection: HASH_SELECTION.BOTH,
       });
 
       const verify = await verifyDetachedSignature({
@@ -223,24 +249,22 @@ export async function runSelfTest() {
       if (verify.valid) {
         throw new Error('Expected INVALID for wrong file input.');
       }
-      if (!verify.errors.some((line) => line.includes('Digest mismatch'))) {
-        throw new Error(`Expected digest mismatch diagnostic for file, got: ${verify.errors.join(' | ')}`);
+      if (!verify.errors.some((line) => line.includes('SEP-53 content signature verification failed'))) {
+        throw new Error(`Expected SEP-53 verification failure for file, got: ${verify.errors.join(' | ')}`);
       }
     }),
 
-    createResult('sep7 tx sign/verify', async () => {
+    createResult('v2 xdr proof sign/verify', async () => {
       const seed = hexToBytes('3333333333333333333333333333333333333333333333333333333333333333');
       const fileContext = await makeFileContext('image.bin', utf8ToBytes('binary-like-content'));
 
       const signerPublic = await derivePublicKeyFromSeed(seed);
       const signer = encodeEd25519PublicKey(signerPublic);
 
-      const draft = createSep7Draft({
+      const draft = createXdrProofDraft({
         inputContext: fileContext,
         signerAddress: signer,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
-        originDomain: 'localhost',
-        hashSelection: HASH_SELECTION.BOTH,
       });
 
       const txHash = await computeTransactionHash(draft.txXdr, TESTNET_NETWORK_PASSPHRASE);
@@ -253,7 +277,7 @@ export async function runSelfTest() {
       });
 
       const signedXdr = bytesToBase64(signedEnvelope);
-      const sep7Doc = await createSep7DetachedSignature({
+      const xdrDoc = await finalizeXdrProof({
         inputContext: fileContext,
         signedXdr,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
@@ -263,7 +287,7 @@ export async function runSelfTest() {
       });
 
       const verify = await verifyDetachedSignature({
-        signatureDoc: sep7Doc.doc,
+        signatureDoc: xdrDoc.doc,
         inputContext: fileContext,
       });
 
@@ -272,68 +296,17 @@ export async function runSelfTest() {
       }
     }),
 
-    createResult('sep7 placeholder source + explicit signer', async () => {
-      const seed = hexToBytes('5555555555555555555555555555555555555555555555555555555555555555');
-      const fileContext = await makeFileContext('blob.dat', utf8ToBytes('placeholder source account flow'));
-
-      const signerPublic = await derivePublicKeyFromSeed(seed);
-      const signer = encodeEd25519PublicKey(signerPublic);
-
-      const draft = createSep7Draft({
-        inputContext: fileContext,
-        signerAddress: '',
-        networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
-        originDomain: 'localhost',
-        hashSelection: HASH_SELECTION.BOTH,
-      });
-
-      const txHash = await computeTransactionHash(draft.txXdr, TESTNET_NETWORK_PASSPHRASE);
-      const signature = await signBytesWithSeed(seed, txHash);
-      const hint = signatureHint(signerPublic);
-
-      const signedEnvelope = encodeSignedTxEnvelope({
-        txXdr: draft.txXdr,
-        signatures: [{ hint, signature }],
-      });
-
-      const signedXdr = bytesToBase64(signedEnvelope);
-      const sep7Doc = await createSep7DetachedSignature({
-        inputContext: fileContext,
-        signedXdr,
-        networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
-        expectedSigner: signer,
-        expectedManageDataEntries: draft.boundHashes,
-        hashSelection: draft.hashSelection,
-      });
-
-      const verify = await verifyDetachedSignature({
-        signatureDoc: sep7Doc.doc,
-        inputContext: fileContext,
-      });
-
-      if (!verify.valid) {
-        throw new Error(`Expected VALID, got ${verify.summary}`);
-      }
-
-      const warnLine = verify.warnings.find((line) => line.includes('sourceAccount') && line.includes('differs'));
-      if (!warnLine) {
-        throw new Error('Expected sourceAccount/signer mismatch warning.');
-      }
-    }),
-
-    createResult('sep7 wrong network passphrase detection', async () => {
+    createResult('v2 xdr proof wrong network passphrase detection', async () => {
       const seed = hexToBytes('4444444444444444444444444444444444444444444444444444444444444444');
       const fileContext = await makeFileContext('a.bin', utf8ToBytes('wallet mode network mismatch test'));
 
       const signerPublic = await derivePublicKeyFromSeed(seed);
       const signer = encodeEd25519PublicKey(signerPublic);
 
-      const draft = createSep7Draft({
+      const draft = createXdrProofDraft({
         inputContext: fileContext,
         signerAddress: signer,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
-        originDomain: 'localhost',
-        hashSelection: HASH_SELECTION.BOTH,
       });
 
       const txHash = await computeTransactionHash(draft.txXdr, TESTNET_NETWORK_PASSPHRASE);
@@ -346,7 +319,7 @@ export async function runSelfTest() {
       });
 
       const signedXdr = bytesToBase64(signedEnvelope);
-      const sep7Doc = await createSep7DetachedSignature({
+      const xdrDoc = await finalizeXdrProof({
         inputContext: fileContext,
         signedXdr,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
@@ -356,9 +329,9 @@ export async function runSelfTest() {
       });
 
       const badDoc = {
-        ...sep7Doc.doc,
+        ...xdrDoc.doc,
         network: {
-          ...sep7Doc.doc.network,
+          ...xdrDoc.doc.network,
           passphrase: 'Public Global Stellar Network ; September 2015',
         },
       };
@@ -378,19 +351,18 @@ export async function runSelfTest() {
       }
     }),
 
-    createResult('sep7 verify rejects incomplete hash coverage', async () => {
+    createResult('v2 xdr proof verify rejects incomplete hash coverage', async () => {
       const seed = hexToBytes('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
       const textContext = await makeTextContext('incomplete coverage regression');
 
       const signerPublic = await derivePublicKeyFromSeed(seed);
       const signer = encodeEd25519PublicKey(signerPublic);
 
-      const draft = createSep7Draft({
+      const draft = createXdrProofDraft({
         inputContext: textContext,
         signerAddress: signer,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
-        originDomain: 'localhost',
-        hashSelection: HASH_SELECTION.SHA256,
+        hashSelection: 'sha256',
       });
 
       const txHash = await computeTransactionHash(draft.txXdr, TESTNET_NETWORK_PASSPHRASE);
@@ -402,7 +374,7 @@ export async function runSelfTest() {
       });
       const signedXdr = bytesToBase64(signedEnvelope);
 
-      const sep7Doc = await createSep7DetachedSignature({
+      const xdrDoc = await finalizeXdrProof({
         inputContext: textContext,
         signedXdr,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
@@ -412,9 +384,9 @@ export async function runSelfTest() {
       });
 
       const tamperedDoc = {
-        ...sep7Doc.doc,
+        ...xdrDoc.doc,
         hashes: [
-          ...sep7Doc.doc.hashes,
+          ...xdrDoc.doc.hashes,
           {
             alg: HASH_ALG.SHA3_512,
             hex: textContext.digests.sha3_512.hex,
@@ -435,19 +407,17 @@ export async function runSelfTest() {
       }
     }),
 
-    createResult('sep7 verify requires manageData.entries', async () => {
+    createResult('v2 xdr proof verify requires manageData.entries', async () => {
       const seed = hexToBytes('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
       const fileContext = await makeFileContext('strict.json', utf8ToBytes('strict manageData section'));
 
       const signerPublic = await derivePublicKeyFromSeed(seed);
       const signer = encodeEd25519PublicKey(signerPublic);
 
-      const draft = createSep7Draft({
+      const draft = createXdrProofDraft({
         inputContext: fileContext,
         signerAddress: signer,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
-        originDomain: 'localhost',
-        hashSelection: HASH_SELECTION.BOTH,
       });
 
       const txHash = await computeTransactionHash(draft.txXdr, TESTNET_NETWORK_PASSPHRASE);
@@ -459,7 +429,7 @@ export async function runSelfTest() {
       });
       const signedXdr = bytesToBase64(signedEnvelope);
 
-      const sep7Doc = await createSep7DetachedSignature({
+      const xdrDoc = await finalizeXdrProof({
         inputContext: fileContext,
         signedXdr,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
@@ -469,7 +439,7 @@ export async function runSelfTest() {
       });
 
       const badDoc = {
-        ...sep7Doc.doc,
+        ...xdrDoc.doc,
       };
       delete badDoc.manageData;
 
@@ -483,6 +453,34 @@ export async function runSelfTest() {
       }
       if (!verify.errors.some((line) => line.includes('manageData.entries'))) {
         throw new Error(`Expected manageData.entries diagnostic, got: ${verify.errors.join(' | ')}`);
+      }
+    }),
+
+    createResult('v2 verify rejects tampered signature profile metadata', async () => {
+      const seed = hexToBytes('cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd');
+      const textContext = await makeTextContext('strict profile metadata');
+
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: textContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+
+      const tamperedDoc = {
+        ...signResult.doc,
+        signatureScheme: SIGNATURE_SCHEME.TX_ENVELOPE_ED25519,
+      };
+
+      const verify = await verifyDetachedSignature({
+        signatureDoc: tamperedDoc,
+        inputContext: textContext,
+      });
+
+      if (verify.valid) {
+        throw new Error('Expected INVALID for tampered signature profile.');
+      }
+      if (!verify.errors.some((line) => line.includes('Unsupported signature profile'))) {
+        throw new Error(`Expected strict profile rejection, got: ${verify.errors.join(' | ')}`);
       }
     }),
   ];

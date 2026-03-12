@@ -1,7 +1,7 @@
 # Stellar WebSigner
 ## Digital signature tool
 
-Static client-only web app for Stellar (Ed25519) detached signatures (`.sig`) using pure HTML/CSS/JS.
+Static client-only web app for Stellar (Ed25519) content signatures and XDR proofs (`.sig`) using pure HTML/CSS/JS.
 
 [Features](#features) | [Architecture](#architecture) | [Development](#development) | [License](#license)
 
@@ -9,9 +9,10 @@ Static client-only web app for Stellar (Ed25519) detached signatures (`.sig`) us
 
 ## Features
 
-1. Key management: generate/import/export Ed25519 (Stellar) key pairs.
-2. Sign: select a file, create detached signature, download `.sig`.
-3. Verify: select original file + `.sig`, get `VALID`/`INVALID` with technical details.
+1. Key management: generate/import/export Ed25519 (Stellar) keypairs.
+2. Sign locally: select file/text, create SEP-53 content signature, download `.sig`.
+3. Sign with external wallet: generate unsigned XDR proof, sign externally, paste signed XDR, download `.sig`.
+4. Verify: select original input + `.sig`, get `VALID`/`INVALID` with technical details.
 
 ------------
 
@@ -23,7 +24,8 @@ We aim to implement
 * Ed25519 according to RFC8032 and FIPS 186-5
 * SHA-256 according to RFC 4634
 * SHA3-512 according to FIPS 202
-* Signing with Stellar according to SEP-07 and SEP-53
+* Message signing with Stellar according to SEP-53
+* Detached XDR proof verification according to Stellar transaction hashing/signature rules
 
 ### Security model
 
@@ -36,16 +38,16 @@ We aim to implement
 
 ### Signature format choice
 
-Detached signature format is JSON (`schema = stellar-file-signature/v1`) for deterministic parsing and auditability.
+Detached signature format is JSON (`schema = stellar-signature/v2`) for deterministic parsing and auditability.
 
 - human-readable and diff-friendly;
 - explicit `hashes[]` block;
-- deterministic message payload for reproducible signing;
+- explicit proof profile metadata for reproducible verification;
 - defensive verification with field-by-field diagnostics.
 
-### SEP-7 wallet compatibility boundaries
+### External wallet XDR proof boundaries
 
-Implemented as wallet-agnostic SEP-7 URI + pasted `signedXDR`.
+Implemented as unsigned XDR generation + pasted `signedXDR`.
 
 Supported assumptions:
 - `ENVELOPE_TYPE_TX` only.
@@ -54,7 +56,7 @@ Supported assumptions:
 - preconditions/memo extensions outside `NONE` are rejected;
 - every signed digest must match corresponding `ManageData` value;
 - signer signature must be cryptographically valid for tx hash and selected network passphrase.
-- `txSourceAccount` is recorded for diagnostics; mismatch with `signer` is treated as warning (off-chain compatible).
+- `txSourceAccount` must exactly match `signer`.
 
 ------------
 
@@ -106,12 +108,11 @@ npm run selftest
 
 Covers:
 - StrKey roundtrip;
-- local SEP-53 sign/verify (both hashes);
-- local SEP-53 sign/verify (single hash);
-- local SEP-53 verify for renamed byte-identical files;
-- SEP-7 signedXDR verification;
-- wrong network passphrase detection.
-- SEP-7 strict hash/ManageData coverage checks.
+- local SEP-53 sign/verify;
+- local SEP-53 negative cases;
+- XDR proof signedXDR verification;
+- wrong network passphrase detection;
+- strict signature profile and ManageData coverage checks.
 
 ------------
 

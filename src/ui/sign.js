@@ -1,19 +1,25 @@
-import { HASH_SELECTION, PUBLIC_NETWORK_PASSPHRASE } from '../core/constants.js';
-import { wipeBytes } from '../core/bytes.js';
+import { registerSessionWipeHandler } from '../app/session-wipe.js';
+import { base64ToBytes, wipeBytes } from '../core/bytes.js';
+import { PUBLIC_NETWORK_PASSPHRASE } from '../core/constants.js';
 import { createFileInputContext, createTextInputContext } from '../core/input-context.js';
+import { createLocalSep53MessageSignature } from '../core/signing.js';
+import { createXdrProofDraft, finalizeXdrProof } from '../core/xdr-proof.js';
 import {
-  createLocalDetachedSignature,
-  createSep7DetachedSignature,
-  createSep7Draft,
-} from '../core/signing.js';
-import { byId, appendLog, copyText, downloadText, friendlyError, pickOriginDomain, setStatusBox, showToast } from './common.js';
+  byId,
+  appendLog,
+  copyText,
+  downloadText,
+  formatBytes,
+  friendlyError,
+  setStatusBox,
+  showToast,
+} from './common.js';
 
 const MAX_FILE_CACHE_ENTRIES = 4;
 
 export function setupSignTab(state) {
   const modeFileEl = byId('sign-mode-file');
   const modeTextEl = byId('sign-mode-text');
-  const hashSelectionEl = byId('sign-hash-selection');
 
   const fileGroupEl = byId('sign-file-group');
   const textGroupEl = byId('sign-text-group');
@@ -29,18 +35,20 @@ export function setupSignTab(state) {
 
   const localRunBtn = byId('sign-local-run');
   const localPanelEl = byId('sign-local-panel');
-  const sep7PanelEl = byId('sign-sep7-panel');
-
-  const sep7GenerateBtn = byId('sign-sep7-generate');
-  const sep7OpenBtn = byId('sign-sep7-open');
-  const sep7CopyBtn = byId('sign-sep7-copy');
-  const sep7CreateBtn = byId('sign-sep7-create');
-  const sep7UnsignedXdrEl = byId('sign-sep7-unsigned-xdr');
-  const sep7UriEl = byId('sign-sep7-uri');
-  const sep7SignedXdrEl = byId('sign-sep7-signed-xdr');
+  const xdrPanelEl = byId('sign-xdr-panel');
+  const xdrGenerateBtn = byId('sign-xdr-generate');
+  const xdrCopyUnsignedBtn = byId('sign-xdr-copy-unsigned');
+  const xdrCreateBtn = byId('sign-xdr-create');
+  const xdrUnsignedXdrEl = byId('sign-xdr-unsigned-xdr');
+  const xdrSignedXdrEl = byId('sign-xdr-signed-xdr');
 
   const outputSignerEl = byId('sign-output-signer');
+  const outputProfileEl = byId('sign-output-profile');
+  const outputInputInfoEl = byId('sign-output-input-info');
+  const outputHashesEl = byId('sign-output-hashes');
+  const outputSizeEl = byId('sign-output-size');
   const outputSignatureEl = byId('sign-output-signature');
+  const outputJsonLabelEl = byId('sign-output-json-label');
   const outputJsonEl = byId('sign-output-json');
   const downloadBtn = byId('sign-download');
   const copySignerBtn = byId('sign-copy-signer');
@@ -55,26 +63,17 @@ export function setupSignTab(state) {
 
   let textDigestTimer = null;
   let refreshNonce = 0;
-
-  function dispatchKeysUpdated() {
-    window.dispatchEvent(new CustomEvent('keys:updated'));
-  }
+  let contextBusy = false;
 
   function syncSigningModePanels() {
     const hasSeed = Boolean(state.keys.seedBytes);
     localPanelEl.open = hasSeed;
-    sep7PanelEl.open = !hasSeed;
+    xdrPanelEl.open = !hasSeed;
+    updateActionAvailability();
   }
 
   function getInputMode() {
     return modeTextEl.checked ? 'text' : 'file';
-  }
-
-  function getHashSelection() {
-    const value = hashSelectionEl.value;
-    if (value === HASH_SELECTION.SHA256) return HASH_SELECTION.SHA256;
-    if (value === HASH_SELECTION.SHA3_512) return HASH_SELECTION.SHA3_512;
-    return HASH_SELECTION.BOTH;
   }
 
   function applyInputModeUi() {
@@ -102,16 +101,20 @@ export function setupSignTab(state) {
     state.sign.lastSignatureJson = '';
     state.sign.lastSignatureFilename = '';
     outputSignerEl.value = '';
+    outputProfileEl.value = '';
+    outputInputInfoEl.value = '';
+    outputHashesEl.value = '';
+    outputSizeEl.value = '';
     outputSignatureEl.value = '';
     outputJsonEl.value = '';
     downloadBtn.disabled = true;
   }
 
-  function resetSep7Draft() {
-    state.sign.sep7Draft = null;
-    sep7UnsignedXdrEl.value = '';
-    sep7UriEl.value = '';
-    sep7SignedXdrEl.value = '';
+  function resetXdrDraft() {
+    state.sign.xdrDraft = null;
+    xdrUnsignedXdrEl.value = '';
+    xdrSignedXdrEl.value = '';
+    updateActionAvailability();
   }
 
   function resetHashProgress() {
@@ -147,7 +150,6 @@ export function setupSignTab(state) {
     const value = cache.get(key) || null;
     if (!value) return null;
 
-    // bump recency for simple LRU behavior
     cache.delete(key);
     cache.set(key, value);
     return value;
@@ -173,7 +175,45 @@ export function setupSignTab(state) {
     }
   }
 
-  async function buildInputContext({ strict = false } = {}) {
+  function clearCurrentInputContext() {
+    wipeInputBytes(state.sign.inputContext);
+    state.sign.inputContext = null;
+    renderDigests(null);
+  }
+
+  function wipeCachedInputContexts() {
+    if (!(state.sign.fileContextCache instanceof Map)) return;
+    for (const value of state.sign.fileContextCache.values()) {
+      wipeInputBytes(value);
+    }
+    state.sign.fileContextCache.clear();
+  }
+
+  function hasReadyInputContext() {
+    return Boolean(state.sign.inputContext);
+  }
+
+  function setActionButtonState(button, enabled) {
+    button.disabled = !enabled;
+  }
+
+  function updateActionAvailability() {
+    const hasContext = hasReadyInputContext();
+    const hasSeed = Boolean(state.keys.seedBytes);
+    const hasSigner = Boolean(String(state.keys.signerAddress || '').trim());
+    const hasUnsignedXdr = Boolean(xdrUnsignedXdrEl.value.trim());
+    const hasSignedXdr = Boolean(xdrSignedXdrEl.value.trim());
+
+    setActionButtonState(localRunBtn, hasSeed && hasContext && !contextBusy);
+    setActionButtonState(xdrGenerateBtn, hasContext && hasSigner && !contextBusy);
+    setActionButtonState(xdrCopyUnsignedBtn, hasUnsignedXdr && !contextBusy);
+    setActionButtonState(
+      xdrCreateBtn,
+      hasContext && hasSigner && Boolean(state.sign.xdrDraft) && hasSignedXdr && !contextBusy
+    );
+  }
+
+  async function buildInputContext({ strict = false, requireBytes = false } = {}) {
     const mode = getInputMode();
 
     if (mode === 'file') {
@@ -183,24 +223,28 @@ export function setupSignTab(state) {
         return null;
       }
 
-      const cached = getCachedFileContext(file);
-      if (cached) {
-        setHashProgress({
-          phase: 'done',
-          loaded: file.size,
-          total: file.size,
-          message: `Digests loaded from cache for ${file.name}.`,
-        });
-        setTimeout(() => resetHashProgress(), 600);
-        return cached;
+      if (!requireBytes) {
+        const cached = getCachedFileContext(file);
+        if (cached) {
+          setHashProgress({
+            phase: 'done',
+            loaded: file.size,
+            total: file.size,
+            message: `Digests loaded from cache for ${file.name}.`,
+          });
+          setTimeout(() => resetHashProgress(), 600);
+          return cached;
+        }
       }
 
       const context = await createFileInputContext(file, {
         onProgress: setHashProgress,
-        keepBytes: false,
+        keepBytes: requireBytes,
       });
 
-      putCachedFileContext(file, context);
+      if (!requireBytes) {
+        putCachedFileContext(file, context);
+      }
       setTimeout(() => resetHashProgress(), 350);
       return context;
     }
@@ -211,29 +255,68 @@ export function setupSignTab(state) {
       return null;
     }
     resetHashProgress();
-    return createTextInputContext(text);
+    return createTextInputContext(text, { keepBytes: requireBytes });
   }
 
-  async function refreshContextFromUi({ strict = false, silent = false } = {}) {
+  async function refreshDigestContext({ strict = false, silent = false } = {}) {
     const nonce = ++refreshNonce;
+    contextBusy = true;
+    updateActionAvailability();
     try {
-      const context = await buildInputContext({ strict });
+      const context = await buildInputContext({ strict, requireBytes: false });
       if (nonce !== refreshNonce) return null;
 
-      wipeInputBytes(state.sign.inputContext);
+      clearCurrentInputContext();
       state.sign.inputContext = context;
       renderDigests(context);
       return context;
     } catch (err) {
       if (nonce !== refreshNonce) return null;
-      state.sign.inputContext = null;
-      renderDigests(null);
+      clearCurrentInputContext();
       resetHashProgress();
       if (strict) throw err;
       if (!silent) {
         appendLog(logEl, `Digest context reset: ${friendlyError(err)}`);
       }
       return null;
+    } finally {
+      if (nonce === refreshNonce) {
+        contextBusy = false;
+        updateActionAvailability();
+      }
+    }
+  }
+
+  function describeInputDescriptor(input) {
+    if (input?.type === 'file') {
+      return `${input.name || 'file'} (${formatBytes(Number(input.size || 0))})`;
+    }
+    if (input?.type === 'text') {
+      return `Plain Text (${formatBytes(Number(input.size || 0))})`;
+    }
+    return '-';
+  }
+
+  function describeProofProfile(doc) {
+    if (doc?.proofType === 'sep53-message-signature') {
+      return 'SEP-53 Message / Ed25519';
+    }
+    if (doc?.proofType === 'xdr-envelope-proof') {
+      return 'XDR Envelope Proof / Ed25519';
+    }
+    return `${doc?.proofType || '-'} / ${doc?.signatureScheme || '-'}`;
+  }
+
+  function describeHashes(doc) {
+    if (!Array.isArray(doc?.hashes) || doc.hashes.length === 0) return '-';
+    return doc.hashes.map((item) => `${item.alg}: ${item.hex}`).join(' | ');
+  }
+
+  function describeSignatureSize(signatureB64) {
+    try {
+      return `${base64ToBytes(signatureB64).length} bytes`;
+    } catch {
+      return '-';
     }
   }
 
@@ -243,8 +326,12 @@ export function setupSignTab(state) {
     state.sign.lastSignatureFilename = result.filename;
 
     outputSignerEl.value = result.signer || '';
+    outputProfileEl.value = describeProofProfile(result.doc);
+    outputInputInfoEl.value = describeInputDescriptor(result.doc?.input);
+    outputHashesEl.value = describeHashes(result.doc);
+    outputSizeEl.value = describeSignatureSize(result.signatureB64 || result.doc?.signatureB64 || '');
     outputSignatureEl.value = result.signatureB64 || '';
-    outputJsonEl.value = result.json;
+    outputJsonEl.value = result.displayJson || result.json;
 
     downloadBtn.disabled = false;
     setStatusBox(statusEl, 'valid', statusMessage);
@@ -257,108 +344,107 @@ export function setupSignTab(state) {
       return;
     }
 
-    const context = await refreshContextFromUi({ strict: true });
-    const hashSelection = getHashSelection();
+    let context = null;
+    try {
+      context = await buildInputContext({ strict: true, requireBytes: true });
+      const result = await createLocalSep53MessageSignature({
+        inputContext: context,
+        seedBytes: state.keys.seedBytes,
+        signerAddress: state.keys.signerAddress,
+      });
 
-    const result = await createLocalDetachedSignature({
-      inputContext: context,
-      seedBytes: state.keys.seedBytes,
-      signerAddress: state.keys.signerAddress,
-      hashSelection,
-    });
-
-    const signedHashes = result.doc.hashes.map((item) => item.alg).join(', ');
-    setSignatureOutput(result, `SEP-53 signature created (${signedHashes}).`);
-    appendLog(logEl, `Local SEP-53 signature created. signer=${result.signer} hashes=${signedHashes}`);
-    showToast('success', 'Detached signature created.');
+      const signedHashes = result.doc.hashes.map((item) => item.alg).join(', ');
+      setSignatureOutput(result, `Content signature created locally (${signedHashes}).`);
+      appendLog(logEl, `Local SEP-53 content signature created. signer=${result.signer} hashes=${signedHashes}`);
+      showToast('success', 'Content signature created.');
+    } finally {
+      wipeInputBytes(context);
+    }
   }
 
-  async function runSep7Draft() {
-    const context = await refreshContextFromUi({ strict: true });
-    const hashSelection = getHashSelection();
-
-    const draft = createSep7Draft({
+  async function runXdrDraft() {
+    const context = await refreshDigestContext({ strict: true });
+    const draft = createXdrProofDraft({
       inputContext: context,
       signerAddress: state.keys.signerAddress || '',
       networkPassphrase: PUBLIC_NETWORK_PASSPHRASE,
-      originDomain: pickOriginDomain(),
-      hashSelection,
     });
 
-    state.sign.sep7Draft = draft;
-    sep7UnsignedXdrEl.value = draft.unsignedXdrB64;
-    sep7UriEl.value = draft.sep7Uri;
-
+    state.sign.xdrDraft = draft;
+    xdrUnsignedXdrEl.value = draft.unsignedXdr;
     appendLog(
       logEl,
-      `SEP-7 draft generated. hashes=${draft.boundHashes.map((item) => item.alg).join(', ')} placeholder=${draft.placeholderMode}`
+      `Unsigned XDR proof generated. signer=${draft.signerAddress} network=public hashes=${draft.boundHashes.map((item) => item.alg).join(', ')}`
     );
-
-    setStatusBox(statusEl, 'neutral', 'SEP-7 URI generated. Sign in wallet and paste signedXDR.');
-    showToast('success', 'SEP-7 URI generated.');
+    setStatusBox(statusEl, 'neutral', 'Unsigned XDR generated. Sign it in your external wallet and paste the signed XDR.');
+    showToast('success', 'Unsigned XDR generated.');
+    updateActionAvailability();
   }
 
-  async function runSep7SignatureCreate() {
-    const context = await refreshContextFromUi({ strict: true });
-    const signedXdr = sep7SignedXdrEl.value.trim();
+  async function runXdrProofCreate() {
+    const context = await refreshDigestContext({ strict: true });
+    const signedXdr = xdrSignedXdrEl.value.trim();
     if (!signedXdr) {
-      throw new Error('Paste signedXDR first.');
+      throw new Error('Paste signed XDR first.');
+    }
+    if (!state.sign.xdrDraft) {
+      throw new Error('Generate unsigned XDR first.');
     }
 
-    const result = await createSep7DetachedSignature({
+    const result = await finalizeXdrProof({
       inputContext: context,
       signedXdr,
-      networkPassphrase: state.sign.sep7Draft?.networkPassphrase || PUBLIC_NETWORK_PASSPHRASE,
-      expectedSigner: state.keys.signerAddress || state.sign.sep7Draft?.signerAddress || '',
-      expectedManageDataEntries: state.sign.sep7Draft?.boundHashes,
-      hashSelection: state.sign.sep7Draft?.hashSelection || getHashSelection(),
+      networkPassphrase: state.sign.xdrDraft.networkPassphrase,
+      expectedSigner: state.keys.signerAddress,
+      expectedManageDataEntries: state.sign.xdrDraft.boundHashes,
+      hashSelection: state.sign.xdrDraft.hashSelection,
     });
 
-    setSignatureOutput(result, 'SEP-7 detached signature created from signedXDR.');
-    appendLog(logEl, `SEP-7 signature created. signer=${result.signer} network=public`);
-
-    if (!state.keys.signerAddress) {
-      state.keys.signerAddress = result.signer;
-      state.keys.source = 'wallet-signer';
-      dispatchKeysUpdated();
-    }
-
-    showToast('success', 'Signature file created from signedXDR.');
+    setSignatureOutput(result, 'XDR proof created from signed XDR.');
+    appendLog(
+      logEl,
+      `XDR proof created. signer=${result.signer} network=public hashes=${result.doc.hashes.map((item) => item.alg).join(', ')}`
+    );
+    showToast('success', 'Signature file created from signed XDR.');
   }
 
-  async function ensureSep7UriReady() {
-    if (sep7UriEl.value.trim()) return;
-    await runSep7Draft();
+  function handleInputChanged() {
+    resetOutput();
+    resetXdrDraft();
+    clearCurrentInputContext();
+    updateActionAvailability();
+  }
+
+  function handleKeysUpdated() {
+    const activeSigner = String(state.keys.signerAddress || '').trim();
+    if (state.sign.xdrDraft && state.sign.xdrDraft.signerAddress !== activeSigner) {
+      resetXdrDraft();
+    }
+    syncSigningModePanels();
   }
 
   modeFileEl.addEventListener('change', async () => {
     applyInputModeUi();
-    await refreshContextFromUi({ silent: true });
+    handleInputChanged();
+    await refreshDigestContext({ silent: true });
   });
 
   modeTextEl.addEventListener('change', async () => {
     applyInputModeUi();
-    await refreshContextFromUi({ silent: true });
-  });
-
-  hashSelectionEl.addEventListener('change', () => {
-    resetOutput();
-    resetSep7Draft();
+    handleInputChanged();
+    await refreshDigestContext({ silent: true });
   });
 
   fileInput.addEventListener('change', async () => {
-    resetOutput();
-    resetSep7Draft();
-    await refreshContextFromUi();
+    handleInputChanged();
+    await refreshDigestContext();
   });
 
   textInput.addEventListener('input', () => {
-    resetOutput();
-    resetSep7Draft();
-
+    handleInputChanged();
     clearTimeout(textDigestTimer);
     textDigestTimer = setTimeout(() => {
-      refreshContextFromUi({ silent: true }).catch(() => {});
+      refreshDigestContext({ silent: true }).catch(() => {});
     }, 180);
   });
 
@@ -373,7 +459,8 @@ export function setupSignTab(state) {
       modeTextEl.checked = true;
       modeFileEl.checked = false;
       applyInputModeUi();
-      await refreshContextFromUi({ silent: true });
+      handleInputChanged();
+      await refreshDigestContext({ silent: true });
       showToast('success', `Pasted ${value.length} characters.`);
     } catch (err) {
       showToast('error', friendlyError(err));
@@ -381,7 +468,10 @@ export function setupSignTab(state) {
   });
 
   localRunBtn.addEventListener('click', async () => {
-    localRunBtn.disabled = true;
+    const previousLabel = localRunBtn.textContent;
+    contextBusy = true;
+    updateActionAvailability();
+    localRunBtn.textContent = 'Signing...';
     try {
       await runLocalSign();
     } catch (err) {
@@ -390,67 +480,55 @@ export function setupSignTab(state) {
       appendLog(logEl, `Local signing failed: ${msg}`);
       showToast('error', msg);
     } finally {
-      localRunBtn.disabled = false;
+      contextBusy = false;
+      localRunBtn.textContent = previousLabel;
+      updateActionAvailability();
     }
   });
 
-  sep7GenerateBtn.addEventListener('click', async () => {
-    sep7GenerateBtn.disabled = true;
+  xdrGenerateBtn.addEventListener('click', async () => {
+    const previousLabel = xdrGenerateBtn.textContent;
+    xdrGenerateBtn.textContent = 'Generating...';
     try {
-      await runSep7Draft();
+      await runXdrDraft();
     } catch (err) {
       const msg = friendlyError(err);
       setStatusBox(statusEl, 'invalid', msg);
-      appendLog(logEl, `SEP-7 draft failed: ${msg}`);
+      appendLog(logEl, `Unsigned XDR generation failed: ${msg}`);
       showToast('error', msg);
     } finally {
-      sep7GenerateBtn.disabled = false;
+      xdrGenerateBtn.textContent = previousLabel;
+      updateActionAvailability();
     }
   });
 
-  sep7CreateBtn.addEventListener('click', async () => {
-    sep7CreateBtn.disabled = true;
+  xdrCopyUnsignedBtn.addEventListener('click', async () => {
     try {
-      await runSep7SignatureCreate();
+      await copyText(xdrUnsignedXdrEl.value);
+      showToast('success', 'Unsigned XDR copied.');
     } catch (err) {
-      const msg = friendlyError(err);
-      setStatusBox(statusEl, 'invalid', msg);
-      appendLog(logEl, `SEP-7 .sig creation failed: ${msg}`);
-      showToast('error', msg);
-    } finally {
-      sep7CreateBtn.disabled = false;
+      showToast('error', friendlyError(err));
     }
   });
 
-  sep7OpenBtn.addEventListener('click', async () => {
-    sep7OpenBtn.disabled = true;
+  xdrCreateBtn.addEventListener('click', async () => {
+    const previousLabel = xdrCreateBtn.textContent;
+    xdrCreateBtn.textContent = 'Creating...';
     try {
-      await ensureSep7UriReady();
-      window.location.href = sep7UriEl.value.trim();
+      await runXdrProofCreate();
     } catch (err) {
       const msg = friendlyError(err);
       setStatusBox(statusEl, 'invalid', msg);
-      appendLog(logEl, `SEP-7 open failed: ${msg}`);
+      appendLog(logEl, `XDR proof creation failed: ${msg}`);
       showToast('error', msg);
     } finally {
-      sep7OpenBtn.disabled = false;
+      xdrCreateBtn.textContent = previousLabel;
+      updateActionAvailability();
     }
   });
 
-  sep7CopyBtn.addEventListener('click', async () => {
-    sep7CopyBtn.disabled = true;
-    try {
-      await ensureSep7UriReady();
-      await copyText(sep7UriEl.value.trim());
-      showToast('success', 'SEP-7 URI copied.');
-    } catch (err) {
-      const msg = friendlyError(err);
-      setStatusBox(statusEl, 'invalid', msg);
-      appendLog(logEl, `SEP-7 copy failed: ${msg}`);
-      showToast('error', msg);
-    } finally {
-      sep7CopyBtn.disabled = false;
-    }
+  xdrSignedXdrEl.addEventListener('input', () => {
+    updateActionAvailability();
   });
 
   copySignerBtn.addEventListener('click', async () => {
@@ -474,7 +552,7 @@ export function setupSignTab(state) {
   downloadBtn.addEventListener('click', () => {
     if (!state.sign.lastSignatureJson) return;
     downloadText(state.sign.lastSignatureFilename || 'signature.sig', state.sign.lastSignatureJson, 'application/json');
-    showToast('success', 'Detached signature downloaded.');
+    showToast('success', 'Signature file downloaded.');
   });
 
   for (const [buttonId, inputEl] of copyMap) {
@@ -489,20 +567,20 @@ export function setupSignTab(state) {
   }
 
   applyInputModeUi();
+  outputJsonLabelEl.textContent = 'Signature JSON';
   clearDigests();
   resetOutput();
   resetHashProgress();
+  resetXdrDraft();
   setStatusBox(statusEl, 'neutral', 'Waiting for input.');
+  updateActionAvailability();
 
-  window.addEventListener('beforeunload', () => {
-    wipeInputBytes(state.sign.inputContext);
-    if (state.sign.fileContextCache instanceof Map) {
-      for (const value of state.sign.fileContextCache.values()) {
-        wipeInputBytes(value);
-      }
-    }
+  registerSessionWipeHandler(() => {
+    clearCurrentInputContext();
+    wipeCachedInputContexts();
+    resetXdrDraft();
   });
 
-  window.addEventListener('keys:updated', syncSigningModePanels);
+  window.addEventListener('keys:updated', handleKeysUpdated);
   syncSigningModePanels();
 }

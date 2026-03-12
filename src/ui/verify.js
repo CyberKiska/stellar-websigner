@@ -1,6 +1,8 @@
+import { registerSessionWipeHandler } from '../app/session-wipe.js';
 import { createFileInputContext, createTextInputContext } from '../core/input-context.js';
-import { safeJsonParse } from '../core/bytes.js';
-import { diagnosticsForDisplay, verifyDetachedSignature } from '../core/verify.js';
+import { safeJsonParse, wipeBytes } from '../core/bytes.js';
+import { decodeEd25519PublicKey } from '../core/strkey.js';
+import { diagnosticsForDisplay, signatureDocRequiresInputBytes, verifyDetachedSignature } from '../core/verify.js';
 import { byId, appendLog, copyText, friendlyError, readFileText, showToast } from './common.js';
 
 export function setupVerifyTab(state) {
@@ -14,6 +16,7 @@ export function setupVerifyTab(state) {
   const textPasteBtn = byId('verify-text-paste');
 
   const sigFileInput = byId('verify-sig-file');
+  const expectedSignerEl = byId('verify-expected-signer');
   const runBtn = byId('verify-run');
 
   const resultCard = byId('verify-result-card');
@@ -28,9 +31,12 @@ export function setupVerifyTab(state) {
   const logEl = byId('verify-log');
 
   let refreshNonce = 0;
+  let contextBusy = false;
+  let autoExpectedSigner = '';
+  let expectedSignerOverridden = false;
 
   function setResultCardMode(mode) {
-    resultCard.classList.remove('valid', 'invalid');
+    resultCard.classList.remove('valid', 'invalid', 'warning');
     if (mode) resultCard.classList.add(mode);
   }
 
@@ -57,17 +63,53 @@ export function setupVerifyTab(state) {
     textGroupEl.classList.toggle('hidden', mode !== 'text');
   }
 
-  async function buildInputContext({ strict = false } = {}) {
+  function wipeInputBytes(context) {
+    if (context?.bytes instanceof Uint8Array) {
+      wipeBytes(context.bytes);
+    }
+  }
+
+  function clearInputContext() {
+    wipeInputBytes(state.verify.inputContext);
+    state.verify.inputContext = null;
+  }
+
+  function hasSignatureReady() {
+    return Boolean(sigFileInput.files?.[0]);
+  }
+
+  function hasReadyInputContext() {
+    return Boolean(state.verify.inputContext);
+  }
+
+  function updateRunAvailability() {
+    runBtn.disabled = contextBusy || !hasReadyInputContext() || !hasSignatureReady();
+  }
+
+  function syncExpectedSignerFromSession() {
+    const loadedSigner = String(state.keys.signerAddress || '').trim();
+    if (!expectedSignerOverridden || expectedSignerEl.value.trim() === autoExpectedSigner) {
+      expectedSignerEl.value = loadedSigner;
+      autoExpectedSigner = loadedSigner;
+      expectedSignerOverridden = false;
+    }
+  }
+
+  async function buildInputContext({ strict = false, requireBytes = false } = {}) {
     if (getMode() === 'file') {
       const file = selectedFile();
       if (!file) {
         if (strict) throw new Error('Select original file for verification.');
         return null;
       }
-      if (fileContextMatchesSelection(state.verify.inputContext, file)) {
+      if (
+        !requireBytes &&
+        fileContextMatchesSelection(state.verify.inputContext, file) &&
+        !(state.verify.inputContext?.bytes instanceof Uint8Array && state.verify.inputContext.bytes.length > 0)
+      ) {
         return state.verify.inputContext;
       }
-      return createFileInputContext(file);
+      return createFileInputContext(file, { keepBytes: requireBytes });
     }
 
     const text = textInput.value;
@@ -75,21 +117,29 @@ export function setupVerifyTab(state) {
       if (strict) throw new Error('Enter original plain text for verification.');
       return null;
     }
-    return createTextInputContext(text);
+    return createTextInputContext(text, { keepBytes: requireBytes });
   }
 
-  async function refreshInputContext({ strict = false } = {}) {
+  async function refreshDigestContext({ strict = false } = {}) {
     const nonce = ++refreshNonce;
+    contextBusy = true;
+    updateRunAvailability();
     try {
-      const context = await buildInputContext({ strict });
+      const context = await buildInputContext({ strict, requireBytes: false });
       if (nonce !== refreshNonce) return null;
+      clearInputContext();
       state.verify.inputContext = context;
       return context;
     } catch (err) {
       if (nonce !== refreshNonce) return null;
-      state.verify.inputContext = null;
+      clearInputContext();
       if (strict) throw err;
       return null;
+    } finally {
+      if (nonce === refreshNonce) {
+        contextBusy = false;
+        updateRunAvailability();
+      }
     }
   }
 
@@ -107,6 +157,8 @@ export function setupVerifyTab(state) {
 
     if (Array.isArray(report.checked?.hashes) && report.checked.hashes.length > 0) {
       resultChecked.value = report.checked.hashes.map((item) => `${item.alg}: ${item.hex}`).join(' | ');
+    } else if (Number.isInteger(report.checked?.messageBytesLength)) {
+      resultChecked.value = `SEP-53 raw bytes: ${report.checked.messageBytesLength}`;
     } else {
       resultChecked.value = '-';
     }
@@ -114,11 +166,23 @@ export function setupVerifyTab(state) {
     resultDetails.value = diagnosticsForDisplay(report);
 
     if (report.valid) {
+      if (Array.isArray(report.warnings) && report.warnings.length > 0) {
+        setResultCardMode('warning');
+        resultTitle.textContent = 'Verification Warning';
+        resultBadge.textContent = 'WARNING';
+        resultBadge.className = 'badge warning';
+        resultBadge.setAttribute('aria-label', 'Verification result: warning');
+        resultMessage.textContent = report.warnings[0];
+        showToast('warning', 'Verification completed with warnings.');
+        return;
+      }
+
       setResultCardMode('valid');
       resultTitle.textContent = 'Signature Valid';
       resultBadge.textContent = 'VALID';
       resultBadge.className = 'badge valid';
-      resultMessage.textContent = 'Signature is valid for supplied input and signer constraints.';
+      resultBadge.setAttribute('aria-label', 'Verification result: valid');
+      resultMessage.textContent = 'Signature is valid for the supplied input and signer.';
       showToast('success', 'Verification successful.');
       return;
     }
@@ -127,30 +191,45 @@ export function setupVerifyTab(state) {
     resultTitle.textContent = 'Verification Failed';
     resultBadge.textContent = 'INVALID';
     resultBadge.className = 'badge invalid';
+    resultBadge.setAttribute('aria-label', 'Verification result: invalid');
     resultMessage.textContent = report.errors[0] || 'Verification failed.';
     showToast('error', 'Verification failed.');
   }
 
   modeFileEl.addEventListener('change', async () => {
     applyModeUi();
-    state.verify.inputContext = null;
+    clearInputContext();
+    updateRunAvailability();
+    if (selectedFile()) {
+      await refreshDigestContext();
+    }
   });
 
   modeTextEl.addEventListener('change', async () => {
     applyModeUi();
+    clearInputContext();
+    updateRunAvailability();
     if (modeTextEl.checked) {
-      await refreshInputContext();
-      return;
+      await refreshDigestContext();
     }
-    state.verify.inputContext = null;
   });
 
-  fileInput.addEventListener('change', () => {
-    state.verify.inputContext = null;
+  fileInput.addEventListener('change', async () => {
+    clearInputContext();
+    updateRunAvailability();
+    if (selectedFile()) {
+      await refreshDigestContext();
+    }
   });
 
   textInput.addEventListener('input', async () => {
-    await refreshInputContext();
+    clearInputContext();
+    updateRunAvailability();
+    await refreshDigestContext();
+  });
+
+  sigFileInput.addEventListener('change', () => {
+    updateRunAvailability();
   });
 
   textPasteBtn.addEventListener('click', async () => {
@@ -164,31 +243,47 @@ export function setupVerifyTab(state) {
       modeTextEl.checked = true;
       modeFileEl.checked = false;
       applyModeUi();
-      await refreshInputContext();
+      clearInputContext();
+      await refreshDigestContext();
       showToast('success', `Pasted ${text.length} characters.`);
     } catch (err) {
       showToast('error', friendlyError(err));
     }
   });
 
+  expectedSignerEl.addEventListener('input', () => {
+    expectedSignerOverridden = expectedSignerEl.value.trim() !== autoExpectedSigner;
+  });
+
   runBtn.addEventListener('click', async () => {
+    const previousLabel = runBtn.textContent;
+    let operationContext = null;
     runBtn.disabled = true;
+    runBtn.textContent = 'Verifying...';
     resultCard.classList.add('hidden');
 
     try {
-      const inputContext = await refreshInputContext({ strict: true });
       const signatureDoc = await readSignatureDoc();
+      const requiresBytes = signatureDocRequiresInputBytes(signatureDoc);
+      operationContext = requiresBytes
+        ? await buildInputContext({ strict: true, requireBytes: true })
+        : await refreshDigestContext({ strict: true });
+
+      const expectedSigner = expectedSignerEl.value.trim();
+      if (expectedSigner) {
+        decodeEd25519PublicKey(expectedSigner);
+      }
 
       const report = await verifyDetachedSignature({
         signatureDoc,
-        inputContext,
-        expectedSigner: state.keys.signerAddress || '',
+        inputContext: operationContext,
+        expectedSigner,
       });
 
       renderReport(report);
       appendLog(
         logEl,
-        `Verification completed: ${report.summary} signer=${report.signer || '-'} expected=${state.keys.signerAddress || '-'}`
+        `Verification completed: ${report.summary} signer=${report.signer || '-'} expected=${expectedSigner || '-'}`
       );
     } catch (err) {
       const message = friendlyError(err);
@@ -197,6 +292,7 @@ export function setupVerifyTab(state) {
       resultTitle.textContent = 'Verification Failed';
       resultBadge.textContent = 'INVALID';
       resultBadge.className = 'badge invalid';
+      resultBadge.setAttribute('aria-label', 'Verification result: invalid');
       resultMessage.textContent = message;
       resultSigner.value = '';
       resultChecked.value = '-';
@@ -204,7 +300,11 @@ export function setupVerifyTab(state) {
       appendLog(logEl, `Verification error: ${message}`);
       showToast('error', message);
     } finally {
-      runBtn.disabled = false;
+      if (operationContext && operationContext !== state.verify.inputContext) {
+        wipeInputBytes(operationContext);
+      }
+      runBtn.textContent = previousLabel;
+      updateRunAvailability();
     }
   });
 
@@ -217,5 +317,11 @@ export function setupVerifyTab(state) {
     }
   });
 
+  window.addEventListener('keys:updated', syncExpectedSignerFromSession);
+  registerSessionWipeHandler(clearInputContext);
+
   applyModeUi();
+  syncExpectedSignerFromSession();
+  resultBadge.setAttribute('aria-label', 'Verification result: neutral');
+  updateRunAvailability();
 }

@@ -35,13 +35,13 @@
         <div>
           <div class="header-group">
             <h1>Stellar WebSigner</h1>
-            <p class="subtitle">Ed25519 detached signatures<br />Client-only static app</p>
+            <p class="subtitle">Ed25519 content signatures and XDR proofs<br />Client-only static app</p>
           </div>
 
           <nav class="nav-menu" role="tablist" aria-label="Primary">
-            <button class="nav-item active" data-tab="keys" type="button"><span class="icon">🔑</span> Keys</button>
-            <button class="nav-item" data-tab="sign" type="button"><span class="icon">✍️</span> Sign</button>
-            <button class="nav-item" data-tab="verify" type="button"><span class="icon">🛡️</span> Verify</button>
+            <button id="nav-keys" class="nav-item active" data-tab="keys" role="tab" aria-selected="true" aria-controls="tab-keys" type="button"><span class="icon">🔑</span> Keys</button>
+            <button id="nav-sign" class="nav-item" data-tab="sign" role="tab" aria-selected="false" aria-controls="tab-sign" tabindex="-1" type="button"><span class="icon">✍️</span> Sign</button>
+            <button id="nav-verify" class="nav-item" data-tab="verify" role="tab" aria-selected="false" aria-controls="tab-verify" tabindex="-1" type="button"><span class="icon">🛡️</span> Verify</button>
           </nav>
         </div>
 
@@ -49,7 +49,7 @@
           <div class="context-row">
             <span>System Status</span>
             <span class="context-val status-line">
-              <span id="sys-status-dot" class="status-indicator secure"></span>
+              <span id="sys-status-dot" class="status-indicator ready" aria-label="System status: Ready"></span>
               <span id="sys-status-text">Ready</span>
             </span>
           </div>
@@ -73,7 +73,7 @@
       <main class="main-content">
         <div id="toast-container" class="toast-container"></div>
 
-        <section id="tab-keys" class="tab-panel module-panel module-keys active">
+        <section id="tab-keys" class="tab-panel module-panel module-keys active" role="tabpanel" aria-labelledby="nav-keys" aria-hidden="false">
           <header class="section-header">
             <h2>Key Management (Stellar StrKey)</h2>
           </header>
@@ -151,10 +151,10 @@
           </div>
         </section>
 
-        <section id="tab-sign" class="tab-panel module-panel module-sign">
+        <section id="tab-sign" class="tab-panel module-panel module-sign" role="tabpanel" aria-labelledby="nav-sign" aria-hidden="true">
           <header class="section-header">
-            <h2>Create Detached Signature (.sig)</h2>
-            <p class="muted-copy">Flow: choose file/text -> inspect digest -> sign -> download.</p>
+            <h2>Create Signature (.sig)</h2>
+            <p class="muted-copy">Flow: choose content -> inspect digest -> sign locally or create unsigned XDR for external wallet -> download.</p>
           </header>
 
           <div class="panel-grid">
@@ -165,17 +165,8 @@
                   <label class="radio-inline"><input id="sign-mode-file" type="radio" name="sign-input-mode" value="file" checked /> File</label>
                   <label class="radio-inline"><input id="sign-mode-text" type="radio" name="sign-input-mode" value="text" /> Plain Text</label>
                 </div>
-              </div>
-
-              <div class="form-group">
-                <label for="sign-hash-selection">Hash Set In Signature</label>
-                <select id="sign-hash-selection">
-                  <option value="both">SHA-256 + SHA3-512 (default)</option>
-                  <option value="sha256">SHA-256 only</option>
-                  <option value="sha3-512">SHA3-512 only</option>
-                </select>
                 <p class="muted-copy">
-                  Local and SEP-7 modes can bind both digests in one `.sig` (each digest in a dedicated ManageData entry).
+                  The app always computes SHA-256 and SHA3-512. Local signing creates a direct SEP-53 content signature; external-wallet signing creates an XDR proof bound to these digests.
                 </p>
               </div>
 
@@ -222,51 +213,48 @@
 
             <details id="sign-local-panel" class="card mode-panel full-width" open>
               <summary class="mode-summary">
-                <span class="mode-summary-title">Local Seed Signing</span>
-                <span class="mode-summary-hint">Default when secret seed is loaded</span>
+                <span class="mode-summary-title">Sign Locally</span>
+                <span class="mode-summary-hint">Direct SEP-53 signature over the selected content</span>
               </summary>
               <div class="mode-panel-body">
                 <p class="muted-copy">Uses loaded `S...` from current session memory only.</p>
 
                 <div class="button-group compact">
-                  <button id="sign-local-run" class="primary" type="button">Sign Locally</button>
+                  <button id="sign-local-run" class="primary" type="button" disabled>Sign Locally</button>
                 </div>
               </div>
             </details>
 
-            <details id="sign-sep7-panel" class="card mode-panel full-width">
+            <details id="sign-xdr-panel" class="card mode-panel full-width">
               <summary class="mode-summary">
-                <span class="mode-summary-title">Wallet Signing (SEP-7)</span>
-                <span class="mode-summary-hint">Default when secret seed is not loaded</span>
+                <span class="mode-summary-title">Sign With External Wallet (XDR)</span>
+                <span class="mode-summary-hint">Generate unsigned XDR, sign externally, paste signed XDR</span>
               </summary>
               <div class="mode-panel-body">
                 <p class="muted-copy">
-                  Wallet-agnostic flow: Public Network by default, generate URI, sign in wallet, paste `signedXDR` back.
+                  This app never receives the external wallet secret seed. It generates an unsigned XDR proof request and verifies the returned signed XDR.
+                </p>
+                <p class="muted-copy">
+                  Load signer `G...` in Keys before generating XDR, sign on Stellar Public Network in your external wallet, and paste the signed XDR back here.
                 </p>
 
                 <div class="button-group compact">
-                  <button id="sign-sep7-generate" class="primary" type="button">Generate SEP-7 URI</button>
-                  <button id="sign-sep7-open" class="secondary" type="button">Open URI</button>
-                  <button id="sign-sep7-copy" class="secondary" type="button">Copy URI</button>
+                  <button id="sign-xdr-generate" class="primary" type="button" disabled>Generate Unsigned XDR</button>
+                  <button id="sign-xdr-copy-unsigned" class="secondary" type="button" disabled>Copy Unsigned XDR</button>
                 </div>
 
                 <div class="form-group">
-                  <label for="sign-sep7-unsigned-xdr">Unsigned XDR</label>
-                  <textarea id="sign-sep7-unsigned-xdr" rows="4" readonly></textarea>
+                  <label for="sign-xdr-unsigned-xdr">Unsigned XDR</label>
+                  <textarea id="sign-xdr-unsigned-xdr" rows="4" readonly></textarea>
                 </div>
 
                 <div class="form-group">
-                  <label for="sign-sep7-uri">SEP-7 URI</label>
-                  <textarea id="sign-sep7-uri" rows="4" readonly></textarea>
-                </div>
-
-                <div class="form-group">
-                  <label for="sign-sep7-signed-xdr">Paste signed XDR</label>
-                  <textarea id="sign-sep7-signed-xdr" rows="4" placeholder="AAAA..."></textarea>
+                  <label for="sign-xdr-signed-xdr">Paste Signed XDR</label>
+                  <textarea id="sign-xdr-signed-xdr" rows="4" placeholder="AAAA..."></textarea>
                 </div>
 
                 <div class="button-group compact">
-                  <button id="sign-sep7-create" class="primary" type="button">Create .sig from signed XDR</button>
+                  <button id="sign-xdr-create" class="primary" type="button" disabled>Create .sig from signed XDR</button>
                 </div>
               </div>
             </details>
@@ -287,12 +275,32 @@
               </div>
 
               <div class="form-group">
+                <label for="sign-output-profile">Proof Profile</label>
+                <input id="sign-output-profile" type="text" readonly />
+              </div>
+
+              <div class="form-group">
+                <label for="sign-output-input-info">Input</label>
+                <input id="sign-output-input-info" type="text" readonly />
+              </div>
+
+              <div class="form-group">
+                <label for="sign-output-hashes">Hashes</label>
+                <input id="sign-output-hashes" type="text" readonly />
+              </div>
+
+              <div class="form-group">
+                <label for="sign-output-size">Signature Size</label>
+                <input id="sign-output-size" type="text" readonly />
+              </div>
+
+              <div class="form-group">
                 <label for="sign-output-signature">Signature (Base64)</label>
                 <input id="sign-output-signature" type="text" readonly />
               </div>
 
               <div class="form-group">
-                <label for="sign-output-json">Detached Signature JSON</label>
+                <label id="sign-output-json-label" for="sign-output-json">Signature JSON</label>
                 <textarea id="sign-output-json" rows="12" readonly></textarea>
               </div>
 
@@ -308,10 +316,10 @@
           </div>
         </section>
 
-        <section id="tab-verify" class="tab-panel module-panel module-verify">
+        <section id="tab-verify" class="tab-panel module-panel module-verify" role="tabpanel" aria-labelledby="nav-verify" aria-hidden="true">
           <header class="section-header">
-            <h2>Verify Detached Signature</h2>
-            <p class="muted-copy">Checks signature validity and reports detailed reasons for invalid state.</p>
+            <h2>Verify Signature (.sig)</h2>
+            <p class="muted-copy">Checks SEP-53 content signatures and XDR proofs, then reports detailed reasons for invalid state.</p>
           </header>
 
           <div class="panel-grid">
@@ -342,15 +350,20 @@
                 <input id="verify-sig-file" type="file" accept=".sig,.json,application/json" />
               </div>
 
+              <div class="form-group">
+                <label for="verify-expected-signer">Expected Signer (optional)</label>
+                <input id="verify-expected-signer" type="text" autocomplete="off" spellcheck="false" placeholder="G..." />
+              </div>
+
               <div class="button-group compact">
-                <button id="verify-run" class="primary" type="button">Verify Signature</button>
+                <button id="verify-run" class="primary" type="button" disabled>Verify Signature</button>
               </div>
             </div>
 
             <div id="verify-result-card" class="card full-width hidden result-card">
               <div class="card-head">
                 <h3 id="verify-result-title">Verification Result</h3>
-                <span id="verify-result-badge" class="badge neutral">-</span>
+                <span id="verify-result-badge" class="badge neutral" aria-label="Verification result: neutral">-</span>
               </div>
 
               <p id="verify-result-message" class="result-message"></p>
@@ -364,14 +377,16 @@
               </div>
 
               <div class="form-group">
-                <label for="verify-result-checked">Checked Digest</label>
+                <label for="verify-result-checked">Checked Data</label>
                 <input id="verify-result-checked" type="text" readonly />
               </div>
 
-              <div class="form-group">
-                <label for="verify-details">Technical Details</label>
-                <textarea id="verify-details" class="mono-box log-box" rows="12" readonly></textarea>
-              </div>
+              <details class="diagnostics-panel">
+                <summary class="diagnostics-summary">Technical Details</summary>
+                <div class="form-group no-margin diagnostics-body">
+                  <textarea id="verify-details" class="mono-box log-box" rows="12" readonly></textarea>
+                </div>
+              </details>
             </div>
 
             <div class="card full-width">

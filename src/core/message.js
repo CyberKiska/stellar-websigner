@@ -2,24 +2,11 @@ import {
   HASH_ALG,
   HASH_SELECTION,
   MANAGE_DATA_NAME,
-  SEP53_PREFIX,
-  SIGNATURE_MESSAGE_MAGIC,
 } from './constants.js';
-import { utf8ToBytes } from './bytes.js';
-import { sha256 } from './hash.js';
 
 export function normalizeInputKind(kind) {
   if (kind === 'file' || kind === 'text') return kind;
   throw new Error('Input type must be file or text.');
-}
-
-export function canonicalizeFileName(name) {
-  return String(name || '')
-    .normalize('NFC')
-    .replace(/\\/g, '\\\\')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/\n/g, '\\n');
 }
 
 export function normalizeHashSelection(value) {
@@ -86,49 +73,6 @@ export function hashAlgorithmFromManageDataName(name) {
   return null;
 }
 
-export function buildDeterministicMessage({ type, fileName, fileSize, hashEntries }) {
-  const inputKind = normalizeInputKind(type);
-  if (!Array.isArray(hashEntries) || hashEntries.length === 0) {
-    throw new Error('At least one hash entry is required.');
-  }
-
-  const canonicalEntries = hashEntries.map((entry) => {
-    const alg = normalizeHashAlgorithmName(entry.alg);
-    const hex = String(entry.hex || '').toLowerCase();
-    if (!/^[0-9a-f]+$/.test(hex)) {
-      throw new Error(`Invalid digest hex for ${alg}.`);
-    }
-    if (hex.length !== expectedDigestHexLength(alg)) {
-      throw new Error(`Invalid digest hex length for ${alg}.`);
-    }
-    return { alg, hex };
-  });
-
-  const lines = [
-    SIGNATURE_MESSAGE_MAGIC,
-    `type=${inputKind}`,
-  ];
-
-  if (inputKind === 'file') {
-    if (!Number.isInteger(fileSize) || fileSize < 0) {
-      throw new Error('File size must be non-negative integer.');
-    }
-    lines.push(`size=${fileSize}`);
-  } else {
-    if (!Number.isInteger(fileSize) || fileSize < 0) {
-      throw new Error('Text size must be non-negative integer.');
-    }
-    lines.push(`size=${fileSize}`);
-  }
-
-  lines.push(`hashes=${canonicalEntries.map((item) => item.alg).join(',')}`);
-  for (const entry of canonicalEntries) {
-    lines.push(`${hashFieldName(entry.alg)}=${entry.hex}`);
-  }
-
-  return lines.join('\n');
-}
-
 export function parseHashEntries(signatureDoc) {
   const raw = signatureDoc?.hashes;
   if (!Array.isArray(raw) || raw.length === 0) {
@@ -165,12 +109,6 @@ export function normalizeHashAlgorithmName(value) {
   throw new Error(`Unsupported hash algorithm: ${value}`);
 }
 
-export function hashFieldName(alg) {
-  const normalized = normalizeHashAlgorithmName(alg);
-  if (normalized === HASH_ALG.SHA256) return 'sha256';
-  return 'sha3_512';
-}
-
 function expectedDigestHexLength(alg) {
   const normalized = normalizeHashAlgorithmName(alg);
   if (normalized === HASH_ALG.SHA256) return 64;
@@ -187,9 +125,4 @@ export function buildInputDescriptor({ type, fileName, fileSize }) {
     };
   }
   return { type: 'text', size: Number(fileSize || 0) };
-}
-
-export async function computeSep53MessageHash(message) {
-  const payload = utf8ToBytes(SEP53_PREFIX + String(message));
-  return sha256(payload);
 }

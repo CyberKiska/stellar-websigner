@@ -16,7 +16,8 @@
     along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { wipeBytes } from './core/bytes.js';
+import { installSessionWipeGuards } from './app/session-wipe.js';
+import { assertRuntimeCryptoHealth } from './core/runtime-check.js';
 import { setupKeysTab } from './ui/keys.js';
 import { setupLayout } from './ui/layout.js';
 import { setupSignTab } from './ui/sign.js';
@@ -28,11 +29,12 @@ const state = {
     seedBytes: null,
     signerAddress: '',
     source: 'none',
+    exported: false,
   },
   sign: {
     inputContext: null,
     fileContextCache: new Map(),
-    sep7Draft: null,
+    xdrDraft: null,
     lastSignatureDoc: null,
     lastSignatureJson: '',
     lastSignatureFilename: '',
@@ -42,20 +44,14 @@ const state = {
   },
 };
 
-function wipeSensitiveState() {
-  if (state.keys.seedBytes instanceof Uint8Array) {
-    wipeBytes(state.keys.seedBytes);
-  }
-  state.keys.seedBytes = null;
-}
-
 function main() {
+  installSessionWipeGuards();
+
   setupLayout(state);
+  assertRuntimeCryptoHealth();
   setupKeysTab(state);
   setupSignTab(state);
   setupVerifyTab(state);
-
-  window.addEventListener('beforeunload', wipeSensitiveState);
 }
 
 try {

@@ -1,24 +1,29 @@
-import { MODE, SIGNATURE_SCHEMA } from './constants.js';
+import {
+  PAYLOAD_TYPE,
+  PROOF_TYPE,
+  SIGNATURE_SCHEME,
+  SIGNATURE_SCHEMA_V2,
+} from './constants.js';
 
-export function createLocalSignatureDocument({
+export function createSep53MessageSignatureDocument({
   signer,
-  hashEntries,
-  message,
   signatureB64,
   input,
+  hashEntries = [],
 }) {
   return {
-    schema: SIGNATURE_SCHEMA,
-    mode: MODE.SEP53,
+    schema: SIGNATURE_SCHEMA_V2,
     signer,
-    hashes: hashEntries,
-    message,
-    signatureB64,
+    proofType: PROOF_TYPE.SEP53_MESSAGE,
+    payloadType: PAYLOAD_TYPE.RAW_BYTES,
+    signatureScheme: SIGNATURE_SCHEME.SEP53_SHA256_ED25519,
     input,
+    hashes: hashEntries,
+    signatureB64,
   };
 }
 
-export function createSep7SignatureDocument({
+export function createXdrProofSignatureDocument({
   signer,
   networkPassphrase,
   networkHint,
@@ -29,9 +34,11 @@ export function createSep7SignatureDocument({
   input,
 }) {
   return {
-    schema: SIGNATURE_SCHEMA,
-    mode: MODE.SEP7_TX,
+    schema: SIGNATURE_SCHEMA_V2,
     signer,
+    proofType: PROOF_TYPE.XDR_ENVELOPE,
+    payloadType: PAYLOAD_TYPE.DETACHED_DIGESTS,
+    signatureScheme: SIGNATURE_SCHEME.TX_ENVELOPE_ED25519,
     network: {
       passphrase: networkPassphrase,
       hint: networkHint,
@@ -46,8 +53,12 @@ export function createSep7SignatureDocument({
   };
 }
 
-export function serializeSignatureDocument(doc) {
-  return `${JSON.stringify(doc, null, 2)}\n`;
+export function serializeSignatureDocument(doc, options = {}) {
+  const canonicalDoc = canonicalizeJsonValue(doc);
+  if (options.pretty === true) {
+    return `${JSON.stringify(canonicalDoc, null, 2)}\n`;
+  }
+  return `${JSON.stringify(canonicalDoc)}\n`;
 }
 
 export function suggestSignatureFileName({ inputType, originalName }) {
@@ -56,4 +67,22 @@ export function suggestSignatureFileName({ inputType, originalName }) {
     return `${safe}.sig`;
   }
   return 'plain-text.sig';
+}
+
+export function isV2SignatureDocument(signatureDoc) {
+  return String(signatureDoc?.schema || '').trim() === SIGNATURE_SCHEMA_V2;
+}
+
+function canonicalizeJsonValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeJsonValue(item));
+  }
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      out[key] = canonicalizeJsonValue(value[key]);
+    }
+    return out;
+  }
+  return value;
 }
