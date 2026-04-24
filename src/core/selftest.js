@@ -90,6 +90,19 @@ export async function runSelfTest() {
       }
     }),
 
+    createResult('ed25519 signing key is non-extractable', async () => {
+      const seed = hexToBytes('0202020202020202020202020202020202020202020202020202020202020202');
+      const signingKey = await captureSigningKeyUsedBySign(seed, utf8ToBytes('non-extractable signing path'));
+      if (signingKey.extractable !== false) {
+        throw new Error('Expected sign() CryptoKey to be non-extractable.');
+      }
+      await assertExportKeyRejected(signingKey);
+      const signature = await signBytesWithSeed(seed, utf8ToBytes('non-extractable signing path'));
+      if (signature.length !== 64) {
+        throw new Error(`Expected 64-byte signature, got ${signature.length}.`);
+      }
+    }),
+
     createResult('v2 local content signature sign/verify text', async () => {
       const seed = hexToBytes('1212121212121212121212121212121212121212121212121212121212121212');
       const textContext = await makeTextContext('Strict SEP-53 text payload');
@@ -522,5 +535,54 @@ function assertThrows(fn, expectedSubstring) {
   const message = thrown instanceof Error ? thrown.message : String(thrown);
   if (!message.includes(expectedSubstring)) {
     throw new Error(`Expected error message to include "${expectedSubstring}", got "${message}".`);
+  }
+}
+
+async function captureSigningKeyUsedBySign(seedBytes, messageBytes) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle || typeof subtle.sign !== 'function') {
+    throw new Error('WebCrypto subtle.sign is unavailable.');
+  }
+
+  const hadOwnSign = Object.prototype.hasOwnProperty.call(subtle, 'sign');
+  const ownSignDescriptor = Object.getOwnPropertyDescriptor(subtle, 'sign');
+  const originalSign = subtle.sign;
+  let signingKey = null;
+  try {
+    subtle.sign = function spySign(algorithm, key, data) {
+      signingKey = key;
+      return originalSign.call(this, algorithm, key, data);
+    };
+    const signature = await signBytesWithSeed(seedBytes, messageBytes);
+    if (signature.length !== 64) {
+      throw new Error(`Expected 64-byte signature, got ${signature.length}.`);
+    }
+  } finally {
+    if (hadOwnSign) Object.defineProperty(subtle, 'sign', ownSignDescriptor);
+    else delete subtle.sign;
+  }
+
+  if (!signingKey) {
+    throw new Error('signBytesWithSeed did not call subtle.sign.');
+  }
+  return signingKey;
+}
+
+async function assertExportKeyRejected(key) {
+  let thrown = null;
+  try {
+    await globalThis.crypto.subtle.exportKey('jwk', key);
+  } catch (err) {
+    thrown = err;
+  }
+
+  if (!thrown) {
+    throw new Error('Expected exportKey("jwk") to reject for sign() key.');
+  }
+
+  const name = String(thrown.name || '');
+  if (name !== 'InvalidAccessError' && name !== 'InvalidAccessException') {
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    throw new Error(`Expected InvalidAccessError from exportKey, got ${name || message}.`);
   }
 }

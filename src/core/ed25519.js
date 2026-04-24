@@ -12,7 +12,7 @@ export function randomSeed32() {
 
 export async function derivePublicKeyFromSeed(seedBytes) {
   assertSeed(seedBytes);
-  const privateKey = await importPrivateKeyFromSeed(seedBytes);
+  const privateKey = await importExtractablePrivateKeyFromSeed(seedBytes);
   const jwk = await getSubtle().exportKey('jwk', privateKey);
   if (!jwk || typeof jwk.x !== 'string') {
     throw new Error('Cannot derive public key from seed.');
@@ -25,7 +25,7 @@ export async function signBytesWithSeed(seedBytes, messageBytes) {
   if (!(messageBytes instanceof Uint8Array)) {
     throw new Error('Message must be Uint8Array.');
   }
-  const privateKey = await importPrivateKeyFromSeed(seedBytes);
+  const privateKey = await importSigningPrivateKeyFromSeed(seedBytes);
   const signature = await getSubtle().sign('Ed25519', privateKey, messageBytes);
   return new Uint8Array(signature);
 }
@@ -54,10 +54,14 @@ export function signatureHint(publicBytes) {
   return publicBytes.slice(28, 32);
 }
 
-async function importPrivateKeyFromSeed(seedBytes) {
+async function importExtractablePrivateKeyFromSeed(seedBytes) {
   const pkcs8 = concatBytes(ED25519_PKCS8_PREFIX, seedBytes);
-  // Extractable is required because derivePublicKeyFromSeed exports JWK `x`.
   return getSubtle().importKey('pkcs8', pkcs8, { name: 'Ed25519' }, true, ['sign']);
+}
+
+async function importSigningPrivateKeyFromSeed(seedBytes) {
+  const pkcs8 = concatBytes(ED25519_PKCS8_PREFIX, seedBytes);
+  return getSubtle().importKey('pkcs8', pkcs8, { name: 'Ed25519' }, false, ['sign']);
 }
 
 async function importPublicKey(publicBytes) {
