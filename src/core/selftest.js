@@ -46,6 +46,42 @@ async function makeCanonicalSep53Context(vector) {
   throw new Error(`Unsupported SEP-53 vector type: ${vector.type}`);
 }
 
+async function makeSignedTextFixture(text) {
+  const seed = hexToBytes('1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a');
+  const inputContext = await makeTextContext(text);
+  const signResult = await createLocalSep53MessageSignature({
+    inputContext,
+    seedBytes: seed,
+    signerAddress: '',
+  });
+  return {
+    doc: signResult.doc,
+    inputContext,
+  };
+}
+
+async function assertFileSignVerifyForSize(size) {
+  const seed = hexToBytes('1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b');
+  const bytes = new Uint8Array(size);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = (i * 17 + size) & 0xff;
+  }
+  const fileContext = await makeFileContext(`boundary-${size}.bin`, bytes);
+  const signResult = await createLocalSep53MessageSignature({
+    inputContext: fileContext,
+    seedBytes: seed,
+    signerAddress: '',
+  });
+  const verify = await verifyDetachedSignature({
+    signatureDoc: signResult.doc,
+    inputContext: fileContext,
+  });
+
+  if (!verify.valid) {
+    throw new Error(`Expected VALID for ${size}-byte file, got ${verify.summary}.`);
+  }
+}
+
 export async function runSelfTest() {
   const results = [];
 
@@ -244,6 +280,113 @@ export async function runSelfTest() {
         throw new Error(`Expected missing input descriptor failure, got: ${verify.errors.join(' | ')}`);
       }
     }),
+
+    ...[63, 65, 127].map((size) =>
+      createResult(`v2 verify rejects ${size}-byte SEP-53 signature`, async () => {
+        const { doc, inputContext } = await makeSignedTextFixture('malformed signature length regression');
+        const badDoc = {
+          ...doc,
+          signatureB64: bytesToBase64(new Uint8Array(size).fill(0xa5)),
+        };
+        const verify = await verifyDetachedSignature({
+          signatureDoc: badDoc,
+          inputContext,
+        });
+
+        if (verify.valid) {
+          throw new Error(`Expected INVALID for ${size}-byte signature.`);
+        }
+        const expected = `Expected 64-byte signature, got ${size}`;
+        if (!verify.errors.some((line) => line.includes(expected))) {
+          throw new Error(`Expected signature length diagnostic "${expected}", got: ${verify.errors.join(' | ')}`);
+        }
+      })
+    ),
+
+    ...['', 'stellar-signature/v1', 'stellar-signature/v2 ', 'STELLAR-SIGNATURE/V2'].map((schema) =>
+      createResult(`v2 verify rejects schema ${JSON.stringify(schema)}`, async () => {
+        const { doc, inputContext } = await makeSignedTextFixture('schema strictness regression');
+        const verify = await verifyDetachedSignature({
+          signatureDoc: {
+            ...doc,
+            schema,
+          },
+          inputContext,
+        });
+
+        if (verify.valid) {
+          throw new Error(`Expected INVALID for schema ${JSON.stringify(schema)}.`);
+        }
+        if (!verify.errors.some((line) => line.includes('Unsupported schema'))) {
+          throw new Error(`Expected unsupported schema diagnostic, got: ${verify.errors.join(' | ')}`);
+        }
+      })
+    ),
+
+    createResult('v2 verify documents duplicate JSON key last-wins outcome', async () => {
+      const { doc, inputContext } = await makeSignedTextFixture('duplicate key stable outcome');
+      const duplicatedJson = `{"schema":"stellar-signature/v1","schema":${JSON.stringify(doc.schema)},"signer":${JSON.stringify(doc.signer)},"proofType":${JSON.stringify(doc.proofType)},"payloadType":${JSON.stringify(doc.payloadType)},"signatureScheme":${JSON.stringify(doc.signatureScheme)},"input":${JSON.stringify(doc.input)},"hashes":${JSON.stringify(doc.hashes)},"signatureB64":${JSON.stringify(doc.signatureB64)}}`;
+      const parsed = JSON.parse(duplicatedJson);
+      if (parsed.schema !== doc.schema) {
+        throw new Error('Expected JSON parser last-wins behavior for duplicate schema key.');
+      }
+      const verify = await verifyDetachedSignature({
+        signatureDoc: parsed,
+        inputContext,
+      });
+
+      if (!verify.valid) {
+        throw new Error(`Expected VALID for documented duplicate-key last-wins outcome, got ${verify.summary}.`);
+      }
+    }),
+
+    createResult('v2 local content signature sign/verify empty text', async () => {
+      const seed = hexToBytes('1818181818181818181818181818181818181818181818181818181818181818');
+      const textContext = await makeTextContext('');
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: textContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+      const verify = await verifyDetachedSignature({
+        signatureDoc: signResult.doc,
+        inputContext: textContext,
+      });
+
+      if (!verify.valid) {
+        throw new Error(`Expected VALID for empty text, got ${verify.summary}.`);
+      }
+    }),
+
+    createResult('v2 local content signature sign/verify zero-byte file', async () => {
+      const seed = hexToBytes('1919191919191919191919191919191919191919191919191919191919191919');
+      const fileContext = await makeFileContext('empty.bin', new Uint8Array(0));
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: fileContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+      const verify = await verifyDetachedSignature({
+        signatureDoc: signResult.doc,
+        inputContext: fileContext,
+      });
+
+      if (!verify.valid) {
+        throw new Error(`Expected VALID for zero-byte file, got ${verify.summary}.`);
+      }
+    }),
+
+    ...[63, 64, 65].map((size) =>
+      createResult(`v2 local content signature sign/verify SHA-256 boundary file ${size} bytes`, async () => {
+        await assertFileSignVerifyForSize(size);
+      })
+    ),
+
+    ...[71, 72, 73].map((size) =>
+      createResult(`v2 local content signature sign/verify SHA3-512 boundary file ${size} bytes`, async () => {
+        await assertFileSignVerifyForSize(size);
+      })
+    ),
 
     createResult('v2 local content signature verify fails with modified file bytes', async () => {
       const seed = hexToBytes('1414141414141414141414141414141414141414141414141414141414141414');

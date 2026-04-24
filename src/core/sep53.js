@@ -28,7 +28,7 @@ export async function verifySep53Message({ publicKeyBytes, messageBytes, signatu
 }
 
 export function readInputContextBytes(inputContext) {
-  if (!(inputContext?.bytes instanceof Uint8Array) || inputContext.bytes.length === 0) {
+  if (!(inputContext?.bytes instanceof Uint8Array)) {
     throw new Error('Strict SEP-53 mode requires input bytes in memory.');
   }
   return inputContext.bytes;

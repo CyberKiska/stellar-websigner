@@ -76,7 +76,7 @@ export async function verifyDetachedSignature({ signatureDoc, inputContext, expe
     return report.finish({ signer: '', checked: emptyChecked });
   }
 
-  const schema = String(signatureDoc.schema || '').trim();
+  const schema = typeof signatureDoc.schema === 'string' ? signatureDoc.schema : String(signatureDoc.schema || '');
   const isV2Schema = schema === SIGNATURE_SCHEMA_V2;
   if (!isV2Schema) {
     report.fail(`Unsupported schema: ${String(signatureDoc.schema || '(missing)')}`);
