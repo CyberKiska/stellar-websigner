@@ -2,13 +2,14 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { bytesToHexLower, hexToBytes, utf8ToBytes, bytesToBase64 } from '../src/core/bytes.js';
+import { base64ToBytes, bytesToHexLower, hexToBytes, utf8ToBytes, bytesToBase64 } from '../src/core/bytes.js';
 import { createLocalSep53MessageSignature } from '../src/core/signing.js';
+import { SEP53_CANONICAL_TEST_VECTORS } from '../src/core/sep53-test-vectors.js';
 import { createXdrProofDraft, finalizeXdrProof } from '../src/core/xdr-proof.js';
 import { computeDigests } from '../src/core/hash.js';
 import { HASH_SELECTION, TESTNET_NETWORK_PASSPHRASE } from '../src/core/constants.js';
 import { derivePublicKeyFromSeed, signBytesWithSeed, signatureHint } from '../src/core/ed25519.js';
-import { encodeEd25519PublicKey } from '../src/core/strkey.js';
+import { decodeEd25519SecretSeed, encodeEd25519PublicKey } from '../src/core/strkey.js';
 import { computeTransactionHash, encodeSignedTxEnvelope } from '../src/core/xdr.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,6 +37,59 @@ async function makeFileContext(name, bytes) {
   };
 }
 
+async function makeCanonicalSep53Context(vector) {
+  if (vector.type === 'text') return makeTextContext(vector.message);
+  if (vector.type === 'binary') return makeFileContext('sep53-canonical-binary.bin', base64ToBytes(vector.messageB64));
+  throw new Error(`Unsupported SEP-53 vector type: ${vector.type}`);
+}
+
+async function buildCanonicalSep53Vector(vector) {
+  const inputContext = await makeCanonicalSep53Context(vector);
+  const signResult = await createLocalSep53MessageSignature({
+    inputContext,
+    seedBytes: decodeEd25519SecretSeed(vector.seed),
+    signerAddress: vector.address,
+  });
+  const signatureHex = bytesToHexLower(base64ToBytes(signResult.doc.signatureB64));
+  const expectedHexFromB64 = bytesToHexLower(base64ToBytes(vector.signatureB64));
+
+  if (signResult.doc.signatureB64 !== vector.signatureB64 || signatureHex !== vector.signatureHex) {
+    throw new Error(`${vector.id}: generated signature does not match canonical SEP-53 vector.`);
+  }
+  if (expectedHexFromB64 !== vector.signatureHex) {
+    throw new Error(`${vector.id}: canonical base64/hex signature values disagree.`);
+  }
+
+  return {
+    id: vector.id,
+    standard: 'SEP-0053',
+    seed: vector.seed,
+    signer: vector.address,
+    input:
+      vector.type === 'text'
+        ? {
+            type: 'text',
+            text: vector.message,
+          }
+        : {
+            type: 'binary',
+            messageB64: vector.messageB64,
+            size: inputContext.fileSize,
+          },
+    digests: {
+      sha256Hex: inputContext.digests.sha256.hex,
+      sha3_512Hex: inputContext.digests.sha3_512.hex,
+    },
+    signatureB64: signResult.doc.signatureB64,
+    signatureHex,
+    expected: {
+      signatureB64: vector.signatureB64,
+      signatureHex: vector.signatureHex,
+    },
+    doc: { ...signResult.doc },
+  };
+}
+
 async function buildVectors() {
   const seedBothHex = '1111111111111111111111111111111111111111111111111111111111111111';
   const seedSingleHex = '2222222222222222222222222222222222222222222222222222222222222222';
@@ -46,6 +100,7 @@ async function buildVectors() {
   const seedSingle = hexToBytes(seedSingleHex);
   const seedSep7 = hexToBytes(seedSep7Hex);
   const seedSep7Placeholder = hexToBytes(seedSep7PlaceholderHex);
+  const canonicalSep53Vectors = await Promise.all(SEP53_CANONICAL_TEST_VECTORS.map(buildCanonicalSep53Vector));
 
   const textInput = 'offline ed25519 test text';
   const bothContext = await makeTextContext(textInput);
@@ -123,6 +178,7 @@ async function buildVectors() {
 
   return {
     vectors: [
+      ...canonicalSep53Vectors,
       {
         id: 'sep53-text-both-hashes-v2',
         seedHex: seedBothHex,

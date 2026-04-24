@@ -1,8 +1,9 @@
-import { bytesToBase64, hexToBytes, utf8ToBytes } from './bytes.js';
+import { base64ToBytes, bytesToBase64, bytesToHexLower, hexToBytes, utf8ToBytes } from './bytes.js';
 import { derivePublicKeyFromSeed, generateKeypair, signatureHint, signBytesWithSeed } from './ed25519.js';
 import { computeDigests } from './hash.js';
 import { HASH_ALG, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
+import { SEP53_CANONICAL_TEST_VECTORS } from './sep53-test-vectors.js';
 import { createXdrProofDraft, finalizeXdrProof } from './xdr-proof.js';
 import { encodeEd25519PublicKey, decodeEd25519PublicKey, decodeEd25519SecretSeed, encodeEd25519SecretSeed } from './strkey.js';
 import { verifyDetachedSignature } from './verify.js';
@@ -33,6 +34,16 @@ async function makeTextContext(text, options = {}) {
     bytes: options.keepBytes === false ? new Uint8Array(0) : bytes,
     digests,
   };
+}
+
+async function makeCanonicalSep53Context(vector) {
+  if (vector.type === 'text') {
+    return makeTextContext(vector.message);
+  }
+  if (vector.type === 'binary') {
+    return makeFileContext('sep53-canonical-binary.bin', base64ToBytes(vector.messageB64));
+  }
+  throw new Error(`Unsupported SEP-53 vector type: ${vector.type}`);
 }
 
 export async function runSelfTest() {
@@ -100,6 +111,44 @@ export async function runSelfTest() {
       const signature = await signBytesWithSeed(seed, utf8ToBytes('non-extractable signing path'));
       if (signature.length !== 64) {
         throw new Error(`Expected 64-byte signature, got ${signature.length}.`);
+      }
+    }),
+
+    createResult('canonical SEP-53 test vectors', async () => {
+      for (const vector of SEP53_CANONICAL_TEST_VECTORS) {
+        const seedBytes = decodeEd25519SecretSeed(vector.seed);
+        const inputContext = await makeCanonicalSep53Context(vector);
+        const signResult = await createLocalSep53MessageSignature({
+          inputContext,
+          seedBytes,
+          signerAddress: vector.address,
+        });
+
+        if (signResult.signer !== vector.address) {
+          throw new Error(`${vector.id}: expected signer ${vector.address}, got ${signResult.signer}.`);
+        }
+        if (signResult.doc.signatureB64 !== vector.signatureB64) {
+          throw new Error(`${vector.id}: signature base64 mismatch.`);
+        }
+
+        const expectedHexFromB64 = bytesToHexLower(base64ToBytes(vector.signatureB64));
+        if (expectedHexFromB64 !== vector.signatureHex) {
+          throw new Error(`${vector.id}: fixture base64/hex mismatch.`);
+        }
+
+        const signatureHex = bytesToHexLower(base64ToBytes(signResult.doc.signatureB64));
+        if (signatureHex !== vector.signatureHex) {
+          throw new Error(`${vector.id}: signature hex mismatch.`);
+        }
+
+        const verify = await verifyDetachedSignature({
+          signatureDoc: signResult.doc,
+          inputContext,
+          expectedSigner: vector.address,
+        });
+        if (!verify.valid) {
+          throw new Error(`${vector.id}: expected VALID, got ${verify.summary}.`);
+        }
       }
     }),
 

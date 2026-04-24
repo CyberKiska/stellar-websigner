@@ -1,6 +1,134 @@
 {
   "vectors": [
     {
+      "id": "sep53-canonical-ascii",
+      "standard": "SEP-0053",
+      "seed": "SAKICEVQLYWGSOJS4WW7HZJWAHZVEEBS527LHK5V4MLJALYKICQCJXMW",
+      "signer": "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L",
+      "input": {
+        "type": "text",
+        "text": "Hello, World!"
+      },
+      "digests": {
+        "sha256Hex": "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f",
+        "sha3_512Hex": "38e05c33d7b067127f217d8c856e554fcff09c9320b8a5979ce2ff5d95dd27ba35d1fba50c562dfd1d6cc48bc9c5baa4390894418cc942d968f97bcb659419ed"
+      },
+      "signatureB64": "fO5dbYhXUhBMhe6kId/cuVq/AfEnHRHEvsP8vXh03M1uLpi5e46yO2Q8rEBzu3feXQewcQE5GArp88u6ePK6BA==",
+      "signatureHex": "7cee5d6d885752104c85eea421dfdcb95abf01f1271d11c4bec3fcbd7874dccd6e2e98b97b8eb23b643cac4073bb77de5d07b0710139180ae9f3cbba78f2ba04",
+      "expected": {
+        "signatureB64": "fO5dbYhXUhBMhe6kId/cuVq/AfEnHRHEvsP8vXh03M1uLpi5e46yO2Q8rEBzu3feXQewcQE5GArp88u6ePK6BA==",
+        "signatureHex": "7cee5d6d885752104c85eea421dfdcb95abf01f1271d11c4bec3fcbd7874dccd6e2e98b97b8eb23b643cac4073bb77de5d07b0710139180ae9f3cbba78f2ba04"
+      },
+      "doc": {
+        "schema": "stellar-signature/v2",
+        "signer": "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L",
+        "proofType": "sep53-message-signature",
+        "payloadType": "raw-bytes",
+        "signatureScheme": "sep53-sha256-ed25519",
+        "input": {
+          "type": "text",
+          "size": 13
+        },
+        "hashes": [
+          {
+            "alg": "SHA-256",
+            "hex": "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"
+          },
+          {
+            "alg": "SHA3-512",
+            "hex": "38e05c33d7b067127f217d8c856e554fcff09c9320b8a5979ce2ff5d95dd27ba35d1fba50c562dfd1d6cc48bc9c5baa4390894418cc942d968f97bcb659419ed"
+          }
+        ],
+        "signatureB64": "fO5dbYhXUhBMhe6kId/cuVq/AfEnHRHEvsP8vXh03M1uLpi5e46yO2Q8rEBzu3feXQewcQE5GArp88u6ePK6BA=="
+      }
+    },
+    {
+      "id": "sep53-canonical-japanese",
+      "standard": "SEP-0053",
+      "seed": "SAKICEVQLYWGSOJS4WW7HZJWAHZVEEBS527LHK5V4MLJALYKICQCJXMW",
+      "signer": "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L",
+      "input": {
+        "type": "text",
+        "text": "こんにちは、世界！"
+      },
+      "digests": {
+        "sha256Hex": "81cf0fb2f41dab4e93c086815bc082140642d0efa1155398597a823c232bf4fa",
+        "sha3_512Hex": "309b7e4cbe19932c2a9042ae4872d954f12df2c5f098975afc9580449d716232e060d400f41f08cd5567558034014185fca8c0653dc7a1c470f5219b61b175da"
+      },
+      "signatureB64": "CDU265Xs8y3OWbB/56H9jPgUss5G9A0qFuTqH2zs2YDgTm+++dIfmAEceFqB7bhfN3am59lCtDXrCtwH2k1GBA==",
+      "signatureHex": "083536eb95ecf32dce59b07fe7a1fd8cf814b2ce46f40d2a16e4ea1f6cecd980e04e6fbef9d21f98011c785a81edb85f3776a6e7d942b435eb0adc07da4d4604",
+      "expected": {
+        "signatureB64": "CDU265Xs8y3OWbB/56H9jPgUss5G9A0qFuTqH2zs2YDgTm+++dIfmAEceFqB7bhfN3am59lCtDXrCtwH2k1GBA==",
+        "signatureHex": "083536eb95ecf32dce59b07fe7a1fd8cf814b2ce46f40d2a16e4ea1f6cecd980e04e6fbef9d21f98011c785a81edb85f3776a6e7d942b435eb0adc07da4d4604"
+      },
+      "doc": {
+        "schema": "stellar-signature/v2",
+        "signer": "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L",
+        "proofType": "sep53-message-signature",
+        "payloadType": "raw-bytes",
+        "signatureScheme": "sep53-sha256-ed25519",
+        "input": {
+          "type": "text",
+          "size": 27
+        },
+        "hashes": [
+          {
+            "alg": "SHA-256",
+            "hex": "81cf0fb2f41dab4e93c086815bc082140642d0efa1155398597a823c232bf4fa"
+          },
+          {
+            "alg": "SHA3-512",
+            "hex": "309b7e4cbe19932c2a9042ae4872d954f12df2c5f098975afc9580449d716232e060d400f41f08cd5567558034014185fca8c0653dc7a1c470f5219b61b175da"
+          }
+        ],
+        "signatureB64": "CDU265Xs8y3OWbB/56H9jPgUss5G9A0qFuTqH2zs2YDgTm+++dIfmAEceFqB7bhfN3am59lCtDXrCtwH2k1GBA=="
+      }
+    },
+    {
+      "id": "sep53-canonical-binary",
+      "standard": "SEP-0053",
+      "seed": "SAKICEVQLYWGSOJS4WW7HZJWAHZVEEBS527LHK5V4MLJALYKICQCJXMW",
+      "signer": "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L",
+      "input": {
+        "type": "binary",
+        "messageB64": "2zZDP1sa1BVBfLP7TeeMk3sUbaxAkUhBhDiNdrksaFo=",
+        "size": 32
+      },
+      "digests": {
+        "sha256Hex": "4616e6803e90087a8c683f0fcdc6cb8ab569db4f29c0a80a67bc701908e4eaa2",
+        "sha3_512Hex": "5da598a8d010126bb5fbc5a2035752882b560b2ad871dc354e49ce204b06539ae9965834e0af9162895813e1aac3770558702331b598829352451febabeed3b1"
+      },
+      "signatureB64": "VA1+7hefNwv2NKScH6n+Sljj15kLAge+M2wE7fzFOf+L0MMbssA1mwfJZRyyrhBORQRle10X1Dxpx+UOI4EbDQ==",
+      "signatureHex": "540d7eee179f370bf634a49c1fa9fe4a58e3d7990b0207be336c04edfcc539ff8bd0c31bb2c0359b07c9651cb2ae104e4504657b5d17d43c69c7e50e23811b0d",
+      "expected": {
+        "signatureB64": "VA1+7hefNwv2NKScH6n+Sljj15kLAge+M2wE7fzFOf+L0MMbssA1mwfJZRyyrhBORQRle10X1Dxpx+UOI4EbDQ==",
+        "signatureHex": "540d7eee179f370bf634a49c1fa9fe4a58e3d7990b0207be336c04edfcc539ff8bd0c31bb2c0359b07c9651cb2ae104e4504657b5d17d43c69c7e50e23811b0d"
+      },
+      "doc": {
+        "schema": "stellar-signature/v2",
+        "signer": "GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L",
+        "proofType": "sep53-message-signature",
+        "payloadType": "raw-bytes",
+        "signatureScheme": "sep53-sha256-ed25519",
+        "input": {
+          "type": "file",
+          "name": "sep53-canonical-binary.bin",
+          "size": 32
+        },
+        "hashes": [
+          {
+            "alg": "SHA-256",
+            "hex": "4616e6803e90087a8c683f0fcdc6cb8ab569db4f29c0a80a67bc701908e4eaa2"
+          },
+          {
+            "alg": "SHA3-512",
+            "hex": "5da598a8d010126bb5fbc5a2035752882b560b2ad871dc354e49ce204b06539ae9965834e0af9162895813e1aac3770558702331b598829352451febabeed3b1"
+          }
+        ],
+        "signatureB64": "VA1+7hefNwv2NKScH6n+Sljj15kLAge+M2wE7fzFOf+L0MMbssA1mwfJZRyyrhBORQRle10X1Dxpx+UOI4EbDQ=="
+      }
+    },
+    {
       "id": "sep53-text-both-hashes-v2",
       "seedHex": "1111111111111111111111111111111111111111111111111111111111111111",
       "signer": "GDIEVMRSOQV3JKZ2CNUL2RQV4TTNAISKW4NAC25PQUQKGMWJO6DTOAE7",
