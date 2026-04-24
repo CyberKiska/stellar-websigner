@@ -21,11 +21,13 @@ Static client-only web app for Stellar (Ed25519) content signatures and XDR proo
 ### Algorithms and standards alignment
 
 We aim to implement
-* Ed25519 according to RFC8032 and FIPS 186-5
-* SHA-256 according to RFC 4634
-* SHA3-512 according to FIPS 202
-* Message signing with Stellar according to SEP-53
+* Ed25519 according to [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) and [FIPS 186-5](https://doi.org/10.6028/NIST.FIPS.186-5)
+* SHA-256 according to [RFC 4634](https://www.rfc-editor.org/rfc/rfc4634)
+* SHA3-512 according to [FIPS 202](https://doi.org/10.6028/NIST.FIPS.202)
+* Message signing with Stellar according to [SEP-53](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0053.md), especially its Signing Procedure
 * Detached XDR proof verification according to Stellar transaction hashing/signature rules
+
+SEP-53 signs `SHA-256("Stellar Signed Message:\n" || messageBytes)` with Ed25519. This is not Ed25519ph. The SHA-256 step is part of the Stellar SEP-53 message construction, not the RFC 8032 prehash signing variant.
 
 ### Security model
 
@@ -35,6 +37,16 @@ We aim to implement
 - No telemetry.
 - No persistent secret storage (`S...` is memory-only).
 - Session seed wipe is attempted on clear/unload.
+
+This app protects against accidental network disclosure, malformed signature documents, unsafe XDR proof envelopes, and common deployment mistakes when the required headers are installed. It does not protect a secret seed from a compromised browser, malicious extension, injected script already running in the tab, or an operating system compromise.
+
+### Non-goals
+
+- Not a timestamping authority.
+- Not a revocation system.
+- Not a general PKI or identity verification service.
+- Not anti-exfiltration against a compromised tab.
+- Not a replacement for hardware wallets or multisig operational controls.
 
 ### Signature format choice
 
