@@ -197,6 +197,54 @@ export async function runSelfTest() {
       }
     }),
 
+    createResult('v2 verify warns on unknown top-level key', async () => {
+      const seed = hexToBytes('1616161616161616161616161616161616161616161616161616161616161616');
+      const textContext = await makeTextContext('unknown top-level key warning');
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: textContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+      const verify = await verifyDetachedSignature({
+        signatureDoc: {
+          ...signResult.doc,
+          unknownTopLevelKey: 'ignored',
+        },
+        inputContext: textContext,
+      });
+
+      if (!verify.valid) {
+        throw new Error(`Expected VALID with unknown top-level key warning, got ${verify.summary}.`);
+      }
+      if (!verify.warnings.some((line) => line.includes('Unknown top-level key ignored: unknownTopLevelKey'))) {
+        throw new Error(`Expected unknown-key warning, got: ${verify.warnings.join(' | ')}`);
+      }
+    }),
+
+    createResult('v2 verify fails when SEP-53 input descriptor is missing', async () => {
+      const seed = hexToBytes('1717171717171717171717171717171717171717171717171717171717171717');
+      const textContext = await makeTextContext('missing descriptor regression');
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: textContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+      const badDoc = { ...signResult.doc };
+      delete badDoc.input;
+
+      const verify = await verifyDetachedSignature({
+        signatureDoc: badDoc,
+        inputContext: textContext,
+      });
+
+      if (verify.valid) {
+        throw new Error('Expected INVALID when SEP-53 input descriptor is missing.');
+      }
+      if (!verify.errors.some((line) => line.includes('Signature input descriptor is missing'))) {
+        throw new Error(`Expected missing input descriptor failure, got: ${verify.errors.join(' | ')}`);
+      }
+    }),
+
     createResult('v2 local content signature verify fails with modified file bytes', async () => {
       const seed = hexToBytes('1414141414141414141414141414141414141414141414141414141414141414');
       const goodFileContext = await makeFileContext('proof.bin', utf8ToBytes('Strict SEP-53 original file bytes'));

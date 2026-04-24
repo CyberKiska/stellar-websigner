@@ -28,16 +28,39 @@ const SUPPORTED_PROFILES = Object.freeze([
     proofType: PROOF_TYPE.SEP53_MESSAGE,
     payloadType: PAYLOAD_TYPE.RAW_BYTES,
     signatureScheme: SIGNATURE_SCHEME.SEP53_SHA256_ED25519,
+    topLevelKeys: Object.freeze([
+      'schema',
+      'signer',
+      'proofType',
+      'payloadType',
+      'signatureScheme',
+      'input',
+      'hashes',
+      'signatureB64',
+    ]),
   }),
   Object.freeze({
     id: 'xdr-envelope',
     proofType: PROOF_TYPE.XDR_ENVELOPE,
     payloadType: PAYLOAD_TYPE.DETACHED_DIGESTS,
     signatureScheme: SIGNATURE_SCHEME.TX_ENVELOPE_ED25519,
+    topLevelKeys: Object.freeze([
+      'schema',
+      'signer',
+      'proofType',
+      'payloadType',
+      'signatureScheme',
+      'network',
+      'hashes',
+      'manageData',
+      'txSourceAccount',
+      'signedXdr',
+      'input',
+    ]),
   }),
 ]);
 
-export async function verifyDetachedSignature({ signatureDoc, inputContext, expectedSigner = '' }) {
+export async function verifyDetachedSignature({ signatureDoc, inputContext, expectedSigner = '', strict = true }) {
   const report = createReport();
   const emptyChecked = {
     mode: '',
@@ -132,6 +155,9 @@ export async function verifyDetachedSignature({ signatureDoc, inputContext, expe
     return report.finish({ signer, checked });
   }
   report.ok(`Signature profile accepted: ${profile.id}.`);
+  if (strict) {
+    warnUnknownTopLevelKeys({ report, signatureDoc, profile });
+  }
 
   if (profile.id === 'sep53-message') {
     await verifyV2Sep53MessageSignatureMode({
@@ -175,6 +201,7 @@ async function verifyV2Sep53MessageSignatureMode({
     report,
     declaredInput: signatureDoc.input && typeof signatureDoc.input === 'object' ? signatureDoc.input : null,
     inputContext,
+    requireDescriptor: true,
   });
 
   let messageBytes;
@@ -502,7 +529,7 @@ function parseDeclaredManageDataEntries(manageDataSection) {
   });
 }
 
-function validateInputDescriptor({ report, declaredInput, inputContext }) {
+function validateInputDescriptor({ report, declaredInput, inputContext, requireDescriptor = false }) {
   if (declaredInput?.type === 'file' || declaredInput?.type === 'text') {
     report.ok(`Input descriptor accepted: ${declaredInput.type}.`);
     if (declaredInput.type !== inputContext.type) {
@@ -519,7 +546,20 @@ function validateInputDescriptor({ report, declaredInput, inputContext }) {
     return;
   }
 
+  if (requireDescriptor) {
+    report.fail('Signature input descriptor is missing.');
+    return;
+  }
+
   report.warn('Signature input descriptor is missing.');
+}
+
+function warnUnknownTopLevelKeys({ report, signatureDoc, profile }) {
+  const allowed = new Set(profile.topLevelKeys);
+  const unknown = Object.keys(signatureDoc).filter((key) => !allowed.has(key));
+  for (const key of unknown) {
+    report.warn(`Unknown top-level key ignored: ${key}.`);
+  }
 }
 
 function expectedDigestHexLength(alg) {
