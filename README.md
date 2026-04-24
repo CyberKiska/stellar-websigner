@@ -100,6 +100,29 @@ This app is already a single-page static app, so it can be hosted directly on Pa
 
 The workflow builds `dist/` and deploys it as the Pages artifact.
 
+GitHub Pages does not support custom HTTP response headers. For production use, place Pages behind a host or edge proxy that can set the headers below, or deploy `dist/` to a host that honors `_headers`.
+
+Required security headers:
+
+```http
+Content-Security-Policy: default-src 'self'; connect-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Permissions-Policy: clipboard-read=(self), clipboard-write=(self)
+```
+
+`frame-ancestors` must be delivered as an HTTP header; browsers ignore that directive in a meta CSP. The in-document meta CSP intentionally keeps `connect-src 'none'` and adds Trusted Types for script sinks.
+
+Deployment verification checklist:
+
+```bash
+curl -I https://example.invalid/
+```
+
+Confirm the response includes the headers above and that the page cannot be embedded in an iframe.
+
 ### Self-test
 
 ```bash

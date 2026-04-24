@@ -1,6 +1,7 @@
 import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeSecurityHeaders } from './security-headers.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +80,7 @@ export async function buildProject({ minify = true, mode = process.env.BUILD_MOD
 
   if (normalizedMode === 'copy') {
     await buildCopy({ srcDir, distDir, basePath });
+    await writeSecurityHeaders(distDir);
     console.log(`Build completed (copy mode). basePath=${basePath}`);
     return;
   }
@@ -89,6 +91,7 @@ export async function buildProject({ minify = true, mode = process.env.BUILD_MOD
       throw new Error('esbuild is not installed, but BUILD_MODE=bundle was requested.');
     }
     await buildCopy({ srcDir, distDir, basePath });
+    await writeSecurityHeaders(distDir);
     console.log(`Build completed (copy fallback). basePath=${basePath}`);
     return;
   }
@@ -100,6 +103,7 @@ export async function buildProject({ minify = true, mode = process.env.BUILD_MOD
     minify,
     buildFn,
   });
+  await writeSecurityHeaders(distDir);
   console.log(`Build completed (bundle mode). basePath=${basePath}`);
 }
 
