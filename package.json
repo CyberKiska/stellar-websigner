@@ -9,7 +9,7 @@
     "build": "node scripts/build.mjs",
     "selftest": "node scripts/selftest.mjs",
     "vectors": "node scripts/generate-vectors.mjs",
-    "check": "npm run selftest && npm run build"
+    "check": "npm run selftest && npm run vectors && npm run build"
   },
   "devDependencies": {
     "esbuild": "^0.28.0"

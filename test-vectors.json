@@ -1,0 +1,231 @@
+{
+  "vectors": [
+    {
+      "id": "sep53-text-both-hashes-v2",
+      "seedHex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "signer": "GDIEVMRSOQV3JKZ2CNUL2RQV4TTNAISKW4NAC25PQUQKGMWJO6DTOAE7",
+      "input": {
+        "type": "text",
+        "text": "offline ed25519 test text"
+      },
+      "digests": {
+        "sha256Hex": "f6a1cbca9be1af4f9de13b16131707630b36c7b92f3638c5dd7665e406611936",
+        "sha3_512Hex": "180434bc348eeccb24ea8ce34bff5faf07cbb8c644cd8044292a556a19b986bb5c425fc40417f407edcf0f21f259fa8ec231e7e8aa07f1cdbcc349d336e41bfc"
+      },
+      "signatureB64": "1qf0nJGBtST9fGOXlwUh26Tc6j5uA+bHjkf2OsD94IxJ6roLyMOu1AzTzI4BdiYeWt9ECqvfpeWwb00jggk8Cw==",
+      "doc": {
+        "schema": "stellar-signature/v2",
+        "signer": "GDIEVMRSOQV3JKZ2CNUL2RQV4TTNAISKW4NAC25PQUQKGMWJO6DTOAE7",
+        "proofType": "sep53-message-signature",
+        "payloadType": "raw-bytes",
+        "signatureScheme": "sep53-sha256-ed25519",
+        "input": {
+          "type": "text",
+          "size": 25
+        },
+        "hashes": [
+          {
+            "alg": "SHA-256",
+            "hex": "f6a1cbca9be1af4f9de13b16131707630b36c7b92f3638c5dd7665e406611936"
+          },
+          {
+            "alg": "SHA3-512",
+            "hex": "180434bc348eeccb24ea8ce34bff5faf07cbb8c644cd8044292a556a19b986bb5c425fc40417f407edcf0f21f259fa8ec231e7e8aa07f1cdbcc349d336e41bfc"
+          }
+        ],
+        "signatureB64": "1qf0nJGBtST9fGOXlwUh26Tc6j5uA+bHjkf2OsD94IxJ6roLyMOu1AzTzI4BdiYeWt9ECqvfpeWwb00jggk8Cw=="
+      }
+    },
+    {
+      "id": "sep53-file-both-hashes-v2",
+      "seedHex": "2222222222222222222222222222222222222222222222222222222222222222",
+      "signer": "GCQJVJPUPJTVTABP7FK7RXBNFIKKLSM5EO7JP6DECJ77SOBUKWSPB64N",
+      "input": {
+        "type": "file",
+        "fileName": "doc.txt",
+        "fileSize": 36,
+        "fileContentUtf8": "FIPS202 + RFC8032 deterministic test"
+      },
+      "digests": {
+        "sha256Hex": "7aa132b5753cec4513903da2abf8fe6c5f19b08a3b6836f0e4f07214bc232a62",
+        "sha3_512Hex": "f5db2ed2ce917cd454c61e7bc7b185756ee13231472861d53ac35f8fcdd69ee521d046f735e11c1f8b01bd185a7963225682536e27870f26be0ef029099fd934"
+      },
+      "signatureB64": "oLtVB51o9auV/3IiTq/qfJLU/+RGULFQp7yodman4SW+BdQfvMsRbacC8NEuc2ovYooo1ywTPtnKzfQLPEi7Dg==",
+      "doc": {
+        "schema": "stellar-signature/v2",
+        "signer": "GCQJVJPUPJTVTABP7FK7RXBNFIKKLSM5EO7JP6DECJ77SOBUKWSPB64N",
+        "proofType": "sep53-message-signature",
+        "payloadType": "raw-bytes",
+        "signatureScheme": "sep53-sha256-ed25519",
+        "input": {
+          "type": "file",
+          "name": "doc.txt",
+          "size": 36
+        },
+        "hashes": [
+          {
+            "alg": "SHA-256",
+            "hex": "7aa132b5753cec4513903da2abf8fe6c5f19b08a3b6836f0e4f07214bc232a62"
+          },
+          {
+            "alg": "SHA3-512",
+            "hex": "f5db2ed2ce917cd454c61e7bc7b185756ee13231472861d53ac35f8fcdd69ee521d046f735e11c1f8b01bd185a7963225682536e27870f26be0ef029099fd934"
+          }
+        ],
+        "signatureB64": "oLtVB51o9auV/3IiTq/qfJLU/+RGULFQp7yodman4SW+BdQfvMsRbacC8NEuc2ovYooo1ywTPtnKzfQLPEi7Dg=="
+      }
+    },
+    {
+      "id": "xdr-manage-data-file-both-v2",
+      "seedHex": "3333333333333333333333333333333333333333333333333333333333333333",
+      "signer": "GAL4W6P3FNASB4VR5RS6IGMNNYELFDUBH7VQDZFEACBZXBPBQCAM5QIF",
+      "networkPassphrase": "Test SDF Network ; September 2015",
+      "input": {
+        "type": "file",
+        "fileName": "image.bin",
+        "fileSize": 19,
+        "fileContentUtf8": "binary-like-content"
+      },
+      "digests": {
+        "sha256Hex": "bb782fcd5a8b83143b1854b6ba1bc0dfbdfdd2e8ca19bed10d1d45f3d0b5da33",
+        "sha3_512Hex": "386dd35a45dc62e48f21c90fcc4f8317f0a2ba47cb5910b2d9a697e64c372f7257eaecdd5fd39ca540ab95337202e39ffe36ab7df9b84513ee6ed0df6b0adf31"
+      },
+      "manageData": {
+        "entries": [
+          {
+            "name": "ws.sha256",
+            "alg": "SHA-256",
+            "valueHex": "bb782fcd5a8b83143b1854b6ba1bc0dfbdfdd2e8ca19bed10d1d45f3d0b5da33"
+          },
+          {
+            "name": "ws.sha3-512",
+            "alg": "SHA3-512",
+            "valueHex": "386dd35a45dc62e48f21c90fcc4f8317f0a2ba47cb5910b2d9a697e64c372f7257eaecdd5fd39ca540ab95337202e39ffe36ab7df9b84513ee6ed0df6b0adf31"
+          }
+        ]
+      },
+      "unsignedXdr": "AAAAAgAAAAAXy3n7K0Eg8rHsZeQZjW4Iso6BP+sB5KQAg5uF4YCAzgAAPoAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAKAAAACXdzLnNoYTI1NgAAAAAAAAEAAAAgu3gvzVqLgxQ7GFS2uhvA37390ujKGb7RDR1F89C12jMAAAAAAAAACgAAAAt3cy5zaGEzLTUxMgAAAAABAAAAQDht01pF3GLkjyHJD8xPgxfworpHy1kQstmml+ZMNy9yV+rs3V/TnKVAq5UzcgLjn/42q335uEUT7m7Q32sK3zEAAAAAAAAAAA==",
+      "txHashHex": "c8fab237061a22f83befbaaca346f9252c37a968d4b87b5988f1e81b74a2bedb",
+      "txSignatureB64": "44veucsUmwLtoaQzR8AgyJGqrM198vazftlhtJWV+fnNf1JUrYLxuCw/OosFbGeHD3kk8CEIQLhtEQjyx6MgBA==",
+      "signedXdr": "AAAAAgAAAAAXy3n7K0Eg8rHsZeQZjW4Iso6BP+sB5KQAg5uF4YCAzgAAPoAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAKAAAACXdzLnNoYTI1NgAAAAAAAAEAAAAgu3gvzVqLgxQ7GFS2uhvA37390ujKGb7RDR1F89C12jMAAAAAAAAACgAAAAt3cy5zaGEzLTUxMgAAAAABAAAAQDht01pF3GLkjyHJD8xPgxfworpHy1kQstmml+ZMNy9yV+rs3V/TnKVAq5UzcgLjn/42q335uEUT7m7Q32sK3zEAAAAAAAAAAeGAgM4AAABA44veucsUmwLtoaQzR8AgyJGqrM198vazftlhtJWV+fnNf1JUrYLxuCw/OosFbGeHD3kk8CEIQLhtEQjyx6MgBA==",
+      "doc": {
+        "schema": "stellar-signature/v2",
+        "signer": "GAL4W6P3FNASB4VR5RS6IGMNNYELFDUBH7VQDZFEACBZXBPBQCAM5QIF",
+        "proofType": "xdr-envelope-proof",
+        "payloadType": "detached-digests",
+        "signatureScheme": "tx-envelope-ed25519",
+        "network": {
+          "passphrase": "Test SDF Network ; September 2015",
+          "hint": "testnet"
+        },
+        "hashes": [
+          {
+            "alg": "SHA-256",
+            "hex": "bb782fcd5a8b83143b1854b6ba1bc0dfbdfdd2e8ca19bed10d1d45f3d0b5da33"
+          },
+          {
+            "alg": "SHA3-512",
+            "hex": "386dd35a45dc62e48f21c90fcc4f8317f0a2ba47cb5910b2d9a697e64c372f7257eaecdd5fd39ca540ab95337202e39ffe36ab7df9b84513ee6ed0df6b0adf31"
+          }
+        ],
+        "manageData": {
+          "entries": [
+            {
+              "name": "ws.sha256",
+              "alg": "SHA-256",
+              "digestHex": "bb782fcd5a8b83143b1854b6ba1bc0dfbdfdd2e8ca19bed10d1d45f3d0b5da33"
+            },
+            {
+              "name": "ws.sha3-512",
+              "alg": "SHA3-512",
+              "digestHex": "386dd35a45dc62e48f21c90fcc4f8317f0a2ba47cb5910b2d9a697e64c372f7257eaecdd5fd39ca540ab95337202e39ffe36ab7df9b84513ee6ed0df6b0adf31"
+            }
+          ]
+        },
+        "txSourceAccount": "GAL4W6P3FNASB4VR5RS6IGMNNYELFDUBH7VQDZFEACBZXBPBQCAM5QIF",
+        "signedXdr": "AAAAAgAAAAAXy3n7K0Eg8rHsZeQZjW4Iso6BP+sB5KQAg5uF4YCAzgAAPoAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAKAAAACXdzLnNoYTI1NgAAAAAAAAEAAAAgu3gvzVqLgxQ7GFS2uhvA37390ujKGb7RDR1F89C12jMAAAAAAAAACgAAAAt3cy5zaGEzLTUxMgAAAAABAAAAQDht01pF3GLkjyHJD8xPgxfworpHy1kQstmml+ZMNy9yV+rs3V/TnKVAq5UzcgLjn/42q335uEUT7m7Q32sK3zEAAAAAAAAAAeGAgM4AAABA44veucsUmwLtoaQzR8AgyJGqrM198vazftlhtJWV+fnNf1JUrYLxuCw/OosFbGeHD3kk8CEIQLhtEQjyx6MgBA==",
+        "input": {
+          "type": "file",
+          "name": "image.bin",
+          "size": 19
+        }
+      }
+    },
+    {
+      "id": "xdr-manage-data-explicit-signer-v2",
+      "seedHex": "5555555555555555555555555555555555555555555555555555555555555555",
+      "signer": "GDDIEJRXY7JRB3CXMJ56AC5CLHJFG5E7JKXWIRDQZ756KORV64ZEEQ3N",
+      "networkPassphrase": "Test SDF Network ; September 2015",
+      "input": {
+        "type": "file",
+        "fileName": "placeholder.bin",
+        "fileSize": 31,
+        "fileContentUtf8": "placeholder source account flow"
+      },
+      "digests": {
+        "sha256Hex": "71f434970aab82d30e6ad52f4c8dbbe9fafbd6e048c03644c9105ff8aa64ad7d",
+        "sha3_512Hex": "0b8388f9c7e84c89594847d8578d0e655820a059bd6002c232f6765569e79624d153f8d4d6eb2b0503ba79bc0aef60500721fd23e47a1d3183ef5d5516c50df4"
+      },
+      "manageData": {
+        "entries": [
+          {
+            "name": "ws.sha256",
+            "alg": "SHA-256",
+            "valueHex": "71f434970aab82d30e6ad52f4c8dbbe9fafbd6e048c03644c9105ff8aa64ad7d"
+          },
+          {
+            "name": "ws.sha3-512",
+            "alg": "SHA3-512",
+            "valueHex": "0b8388f9c7e84c89594847d8578d0e655820a059bd6002c232f6765569e79624d153f8d4d6eb2b0503ba79bc0aef60500721fd23e47a1d3183ef5d5516c50df4"
+          }
+        ]
+      },
+      "unsignedXdr": "AAAAAgAAAADGgiY3x9MQ7Fdie+ALolnSU3SfSq9kRHDP++U6NfcyQgAAPoAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAKAAAACXdzLnNoYTI1NgAAAAAAAAEAAAAgcfQ0lwqrgtMOatUvTI276fr71uBIwDZEyRBf+KpkrX0AAAAAAAAACgAAAAt3cy5zaGEzLTUxMgAAAAABAAAAQAuDiPnH6EyJWUhH2FeNDmVYIKBZvWACwjL2dlVp55Yk0VP41NbrKwUDunm8Cu9gUAch/SPkeh0xg+9dVRbFDfQAAAAAAAAAAA==",
+      "txHashHex": "501c0bf20ed5b5fb04515bf8107a4ba202de09bb69ca766d6d1020b2eb3a86e7",
+      "txSignatureB64": "UkOgXfaOFjE0SVgWPIKfnfzZMKfFXEmtyJi9vVNJAhi65xeTfOJ45U/VbRQrqkmnWhco6+WBixVl0dmll8/0Aw==",
+      "signedXdr": "AAAAAgAAAADGgiY3x9MQ7Fdie+ALolnSU3SfSq9kRHDP++U6NfcyQgAAPoAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAKAAAACXdzLnNoYTI1NgAAAAAAAAEAAAAgcfQ0lwqrgtMOatUvTI276fr71uBIwDZEyRBf+KpkrX0AAAAAAAAACgAAAAt3cy5zaGEzLTUxMgAAAAABAAAAQAuDiPnH6EyJWUhH2FeNDmVYIKBZvWACwjL2dlVp55Yk0VP41NbrKwUDunm8Cu9gUAch/SPkeh0xg+9dVRbFDfQAAAAAAAAAATX3MkIAAABAUkOgXfaOFjE0SVgWPIKfnfzZMKfFXEmtyJi9vVNJAhi65xeTfOJ45U/VbRQrqkmnWhco6+WBixVl0dmll8/0Aw==",
+      "doc": {
+        "schema": "stellar-signature/v2",
+        "signer": "GDDIEJRXY7JRB3CXMJ56AC5CLHJFG5E7JKXWIRDQZ756KORV64ZEEQ3N",
+        "proofType": "xdr-envelope-proof",
+        "payloadType": "detached-digests",
+        "signatureScheme": "tx-envelope-ed25519",
+        "network": {
+          "passphrase": "Test SDF Network ; September 2015",
+          "hint": "testnet"
+        },
+        "hashes": [
+          {
+            "alg": "SHA-256",
+            "hex": "71f434970aab82d30e6ad52f4c8dbbe9fafbd6e048c03644c9105ff8aa64ad7d"
+          },
+          {
+            "alg": "SHA3-512",
+            "hex": "0b8388f9c7e84c89594847d8578d0e655820a059bd6002c232f6765569e79624d153f8d4d6eb2b0503ba79bc0aef60500721fd23e47a1d3183ef5d5516c50df4"
+          }
+        ],
+        "manageData": {
+          "entries": [
+            {
+              "name": "ws.sha256",
+              "alg": "SHA-256",
+              "digestHex": "71f434970aab82d30e6ad52f4c8dbbe9fafbd6e048c03644c9105ff8aa64ad7d"
+            },
+            {
+              "name": "ws.sha3-512",
+              "alg": "SHA3-512",
+              "digestHex": "0b8388f9c7e84c89594847d8578d0e655820a059bd6002c232f6765569e79624d153f8d4d6eb2b0503ba79bc0aef60500721fd23e47a1d3183ef5d5516c50df4"
+            }
+          ]
+        },
+        "txSourceAccount": "GDDIEJRXY7JRB3CXMJ56AC5CLHJFG5E7JKXWIRDQZ756KORV64ZEEQ3N",
+        "signedXdr": "AAAAAgAAAADGgiY3x9MQ7Fdie+ALolnSU3SfSq9kRHDP++U6NfcyQgAAPoAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAAKAAAACXdzLnNoYTI1NgAAAAAAAAEAAAAgcfQ0lwqrgtMOatUvTI276fr71uBIwDZEyRBf+KpkrX0AAAAAAAAACgAAAAt3cy5zaGEzLTUxMgAAAAABAAAAQAuDiPnH6EyJWUhH2FeNDmVYIKBZvWACwjL2dlVp55Yk0VP41NbrKwUDunm8Cu9gUAch/SPkeh0xg+9dVRbFDfQAAAAAAAAAATX3MkIAAABAUkOgXfaOFjE0SVgWPIKfnfzZMKfFXEmtyJi9vVNJAhi65xeTfOJ45U/VbRQrqkmnWhco6+WBixVl0dmll8/0Aw==",
+        "input": {
+          "type": "file",
+          "name": "placeholder.bin",
+          "size": 31
+        }
+      }
+    }
+  ]
+}
