@@ -1,8 +1,9 @@
 import { base64ToBytes, bytesToBase64, bytesToHexLower, hexToBytes, utf8ToBytes } from './bytes.js';
 import { derivePublicKeyFromSeed, generateKeypair, signatureHint, signBytesWithSeed } from './ed25519.js';
-import { computeDigests, sha3_512 } from './hash.js';
+import { computeDigests, createSha256Stream, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
 import { HASH_ALG, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
+import { createFileInputContext } from './input-context.js';
 import { SEP53_CANONICAL_TEST_VECTORS } from './sep53-test-vectors.js';
 import { createXdrProofDraft, finalizeXdrProof } from './xdr-proof.js';
 import { encodeEd25519PublicKey, decodeEd25519PublicKey, decodeEd25519SecretSeed, encodeEd25519SecretSeed } from './strkey.js';
@@ -89,6 +90,30 @@ async function assertSha3_512Hex(name, bytes, expectedHex) {
   }
 }
 
+async function digestWithChunks(createStream, bytes, chunkSizes) {
+  const stream = createStream();
+  let offset = 0;
+  let chunkIndex = 0;
+  while (offset < bytes.length) {
+    const size = chunkSizes[chunkIndex % chunkSizes.length];
+    const end = Math.min(bytes.length, offset + size);
+    stream.update(bytes.subarray(offset, end));
+    offset = end;
+    chunkIndex += 1;
+  }
+  return stream.finish();
+}
+
+function makeDeterministicBytes(size, seed) {
+  const out = new Uint8Array(size);
+  let value = seed >>> 0;
+  for (let i = 0; i < out.length; i += 1) {
+    value = (Math.imul(value, 1664525) + 1013904223) >>> 0;
+    out[i] = value >>> 24;
+  }
+  return out;
+}
+
 export async function runSelfTest() {
   const results = [];
 
@@ -124,6 +149,106 @@ export async function runSelfTest() {
 
       for (const [name, bytes, expectedHex] of vectors) {
         await assertSha3_512Hex(name, bytes, expectedHex);
+      }
+    }),
+
+    createResult('streaming digest vectors and corpus', async () => {
+      const sha256Vectors = [
+        [
+          'empty',
+          new Uint8Array(0),
+          'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        ],
+        [
+          'abc',
+          utf8ToBytes('abc'),
+          'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+        ],
+        [
+          'rfc4634 multi-block',
+          utf8ToBytes('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'),
+          '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1',
+        ],
+      ];
+
+      for (const [name, bytes, expectedHex] of sha256Vectors) {
+        const actualHex = bytesToHexLower(await digestWithChunks(createSha256Stream, bytes, [1, 7, 64, 3]));
+        if (actualHex !== expectedHex) {
+          throw new Error(`SHA-256 stream ${name}: expected ${expectedHex}, got ${actualHex}.`);
+        }
+      }
+
+      const sha3Boundary = new Uint8Array(73).fill(0x41);
+      const sha3Expected =
+        'a4d32577ac925077aacdc65964041ba05d9058596f6157937f8748e4a1833aa7c954a4e45c4e1132a52737c675d3f9edae3018c51ba388f540bcc4590b4e293d';
+      const sha3Actual = bytesToHexLower(await digestWithChunks(createSha3_512Stream, sha3Boundary, [1, 71, 1]));
+      if (sha3Actual !== sha3Expected) {
+        throw new Error(`SHA3-512 stream boundary: expected ${sha3Expected}, got ${sha3Actual}.`);
+      }
+
+      let sizeState = 0xdecafbad;
+      for (let i = 0; i < 100; i += 1) {
+        sizeState = (Math.imul(sizeState, 1103515245) + 12345) >>> 0;
+        const size = sizeState % 16385;
+        const bytes = makeDeterministicBytes(size, i + 1);
+        const chunkSizes = [1 + (i % 17), 31 + (i % 97), 255 + (i % 251), 4096];
+
+        const oneShotSha256 = bytesToHexLower(await sha256(bytes));
+        const streamSha256 = bytesToHexLower(await digestWithChunks(createSha256Stream, bytes, chunkSizes));
+        if (streamSha256 !== oneShotSha256) {
+          throw new Error(`SHA-256 stream corpus mismatch at size ${size}.`);
+        }
+
+        const oneShotSha3 = bytesToHexLower(await sha3_512(bytes));
+        const streamSha3 = bytesToHexLower(await digestWithChunks(createSha3_512Stream, bytes, chunkSizes));
+        if (streamSha3 !== oneShotSha3) {
+          throw new Error(`SHA3-512 stream corpus mismatch at size ${size}.`);
+        }
+      }
+    }),
+
+    createResult('file input context streams digests by chunk', async () => {
+      const bytes = makeDeterministicBytes(8193, 0x12345678);
+      const file = {
+        name: 'chunked-stream.bin',
+        size: bytes.length,
+        lastModified: 1700000000000,
+        slice(start, end) {
+          return new Blob([bytes.subarray(start, end)]);
+        },
+      };
+
+      const progress = [];
+      const streamed = await createFileInputContext(file, {
+        chunkSize: 71,
+        keepBytes: false,
+        onProgress(item) {
+          progress.push(item.phase);
+        },
+      });
+      const expected = await computeDigests(bytes);
+
+      if (streamed.bytes.length !== 0) {
+        throw new Error('Expected digest-only file context to avoid retaining bytes.');
+      }
+      if (streamed.digests.sha256.hex !== expected.sha256.hex) {
+        throw new Error('Streamed file SHA-256 digest mismatch.');
+      }
+      if (streamed.digests.sha3_512.hex !== expected.sha3_512.hex) {
+        throw new Error('Streamed file SHA3-512 digest mismatch.');
+      }
+      if (!progress.includes('read') || !progress.includes('digest') || progress.at(-1) !== 'done') {
+        throw new Error(`Unexpected streamed file progress phases: ${progress.join(',')}.`);
+      }
+
+      const buffered = await createFileInputContext(file, { chunkSize: 257, keepBytes: true });
+      if (buffered.bytes.length !== bytes.length) {
+        throw new Error('Expected buffered file context to retain bytes.');
+      }
+      for (let i = 0; i < bytes.length; i += 1) {
+        if (buffered.bytes[i] !== bytes[i]) {
+          throw new Error('Buffered file context byte mismatch.');
+        }
       }
     }),
 

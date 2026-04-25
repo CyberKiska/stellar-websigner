@@ -1,8 +1,9 @@
-import { utf8ToBytes, wipeBytes } from './bytes.js';
-import { computeDigests } from './hash.js';
+import { bytesToBase64, bytesToHexLower, utf8ToBytes, wipeBytes } from './bytes.js';
+import { computeDigests, createSha256Stream, createSha3_512Stream } from './hash.js';
 
 const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024;
-const MAX_FILE_SIZE_BYTES = 256 * 1024 * 1024;
+const MAX_BUFFERED_FILE_SIZE_BYTES = 256 * 1024 * 1024;
+const MAX_STREAMED_FILE_SIZE_BYTES = 1024 * 1024 * 1024;
 
 export async function createFileInputContext(file, options = {}) {
   if (!file) throw new Error('File is required.');
@@ -10,13 +11,13 @@ export async function createFileInputContext(file, options = {}) {
   if (!Number.isFinite(totalSize) || totalSize < 0) {
     throw new Error('File size is invalid.');
   }
-  if (totalSize > MAX_FILE_SIZE_BYTES) {
-    throw new Error(`File is too large. Maximum supported size is ${MAX_FILE_SIZE_BYTES} bytes.`);
-  }
-
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
   const chunkSize = Number.isInteger(options.chunkSize) && options.chunkSize > 0 ? options.chunkSize : DEFAULT_CHUNK_SIZE;
   const keepBytes = options.keepBytes === true;
+  const maxFileSize = keepBytes ? MAX_BUFFERED_FILE_SIZE_BYTES : MAX_STREAMED_FILE_SIZE_BYTES;
+  if (totalSize > maxFileSize) {
+    throw new Error(`File is too large. Maximum supported size is ${maxFileSize} bytes.`);
+  }
 
   onProgress?.({
     phase: 'start',
@@ -25,40 +26,25 @@ export async function createFileInputContext(file, options = {}) {
     message: 'Preparing file read...',
   });
 
-  const bytes = await readFileChunked(file, {
+  const { bytes, digests } = await readFileChunked(file, {
     chunkSize,
+    keepBytes,
     onProgress,
   });
 
   onProgress?.({
-    phase: 'digest',
-    loaded: bytes.length,
-    total: bytes.length,
-    message: 'Computing SHA-256 and SHA3-512...',
-  });
-
-  const digests = await computeDigests(bytes);
-
-  onProgress?.({
     phase: 'done',
-    loaded: bytes.length,
-    total: bytes.length,
+    loaded: totalSize,
+    total: totalSize,
     message: 'Digests ready.',
   });
-
-  let outputBytes = new Uint8Array(0);
-  if (keepBytes) {
-    outputBytes = bytes;
-  } else {
-    wipeBytes(bytes);
-  }
 
   return {
     type: 'file',
     fileName: String(file.name || ''),
     fileSize: Number(file.size || 0),
     fileLastModified: Number(file.lastModified || 0),
-    bytes: outputBytes,
+    bytes,
     digests,
   };
 }
@@ -82,17 +68,21 @@ export async function createTextInputContext(text, options = {}) {
   }
 }
 
-async function readFileChunked(file, { chunkSize, onProgress }) {
+async function readFileChunked(file, { chunkSize, keepBytes, onProgress }) {
   const total = Number(file.size || 0);
-  if (total === 0) return new Uint8Array(0);
+  const sha256Stream = createSha256Stream();
+  const sha3Stream = createSha3_512Stream();
+  const out = keepBytes ? new Uint8Array(total) : new Uint8Array(0);
 
-  const out = new Uint8Array(total);
   let offset = 0;
-
   while (offset < total) {
     const end = Math.min(offset + chunkSize, total);
     const chunk = new Uint8Array(await file.slice(offset, end).arrayBuffer());
-    out.set(chunk, offset);
+    sha256Stream.update(chunk);
+    sha3Stream.update(chunk);
+    if (keepBytes) {
+      out.set(chunk, offset);
+    }
     wipeBytes(chunk);
     offset = end;
 
@@ -100,9 +90,33 @@ async function readFileChunked(file, { chunkSize, onProgress }) {
       phase: 'read',
       loaded: offset,
       total,
-      message: `Reading file: ${Math.round((offset / total) * 100)}%`,
+      message: `Reading and hashing file: ${Math.round((offset / total) * 100)}%`,
     });
   }
 
-  return out;
+  onProgress?.({
+    phase: 'digest',
+    loaded: total,
+    total,
+    message: 'Finalizing SHA-256 and SHA3-512...',
+  });
+
+  const [sha256Bytes, sha3512Bytes] = await Promise.all([sha256Stream.finish(), sha3Stream.finish()]);
+  return {
+    bytes: out,
+    digests: {
+      sha256: {
+        alg: 'SHA-256',
+        bytes: sha256Bytes,
+        hex: bytesToHexLower(sha256Bytes),
+        base64: bytesToBase64(sha256Bytes),
+      },
+      sha3_512: {
+        alg: 'SHA3-512',
+        bytes: sha3512Bytes,
+        hex: bytesToHexLower(sha3512Bytes),
+        base64: bytesToBase64(sha3512Bytes),
+      },
+    },
+  };
 }
