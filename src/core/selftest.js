@@ -9,6 +9,7 @@ import { createXdrProofDraft, finalizeXdrProof } from './xdr-proof.js';
 import { encodeEd25519PublicKey, decodeEd25519PublicKey, decodeEd25519SecretSeed, encodeEd25519SecretSeed } from './strkey.js';
 import { verifyDetachedSignature } from './verify.js';
 import { computeTransactionHash, encodeSignedTxEnvelope } from './xdr.js';
+import { assertRuntimeCryptoHealth } from './runtime-check.js';
 
 function createResult(name, fn) {
   return { name, fn };
@@ -133,10 +134,68 @@ function makePlaceholderDigests() {
   };
 }
 
+function makeDeterministicCrypto(draws) {
+  let drawIndex = 0;
+  return {
+    subtle: globalThis.crypto?.subtle || {},
+    getRandomValues(out) {
+      const source = draws[drawIndex % draws.length];
+      drawIndex += 1;
+      out.set(source.subarray(0, out.length));
+      return out;
+    },
+  };
+}
+
 export async function runSelfTest() {
   const results = [];
 
   const tests = [
+    createResult('runtime CSPRNG health probe', async () => {
+      assertThrows(() => assertRuntimeCryptoHealth({ cryptoApi: { subtle: {} } }), 'getRandomValues() is unavailable');
+      assertThrows(
+        () => assertRuntimeCryptoHealth({ cryptoApi: { getRandomValues(out) { return out; } } }),
+        'subtle API is unavailable'
+      );
+
+      const zero = new Uint8Array(32);
+      const ones = new Uint8Array(32).fill(0xff);
+      const aa = new Uint8Array(32).fill(0xaa);
+      const fiftyFive = new Uint8Array(32).fill(0x55);
+      assertRuntimeCryptoHealth({ cryptoApi: makeDeterministicCrypto([zero, ones, aa, fiftyFive]) });
+
+      assertThrows(
+        () => assertRuntimeCryptoHealth({ cryptoApi: makeDeterministicCrypto([aa, aa, aa, aa]) }),
+        'repeated outputs are identical'
+      );
+
+      const low1 = new Uint8Array(32);
+      low1[0] = 0x01;
+      const low2 = new Uint8Array(32);
+      low2[0] = 0x02;
+      const low3 = new Uint8Array(32);
+      low3[0] = 0x04;
+      const low4 = new Uint8Array(32);
+      low4[0] = 0x08;
+      assertThrows(
+        () => assertRuntimeCryptoHealth({ cryptoApi: makeDeterministicCrypto([low1, low2, low3, low4]) }),
+        'bit balance is outside'
+      );
+
+      const high1 = new Uint8Array(32).fill(0xff);
+      high1[0] = 0xfe;
+      const high2 = new Uint8Array(32).fill(0xff);
+      high2[0] = 0xfd;
+      const high3 = new Uint8Array(32).fill(0xff);
+      high3[0] = 0xfb;
+      const high4 = new Uint8Array(32).fill(0xff);
+      high4[0] = 0xf7;
+      assertThrows(
+        () => assertRuntimeCryptoHealth({ cryptoApi: makeDeterministicCrypto([high1, high2, high3, high4]) }),
+        'bit balance is outside'
+      );
+    }),
+
     createResult('sha3-512 fallback vectors', async () => {
       const vectors = [
         [
