@@ -207,7 +207,10 @@
                 </div>
               </div>
 
-              <progress id="sign-hash-progress" value="0" max="100" class="hidden hash-progress"></progress>
+              <div class="progress-row">
+                <progress id="sign-hash-progress" value="0" max="100" class="hidden hash-progress"></progress>
+                <button id="sign-cancel" class="secondary small hidden" type="button">Cancel</button>
+              </div>
               <div id="sign-hash-progress-label" class="progress-label"></div>
             </div>
 
@@ -357,7 +360,13 @@
 
               <div class="button-group compact">
                 <button id="verify-run" class="primary" type="button" disabled>Verify Signature</button>
+                <button id="verify-cancel" class="secondary hidden" type="button">Cancel</button>
               </div>
+
+              <div class="progress-row">
+                <progress id="verify-progress" value="0" max="100" class="hidden hash-progress"></progress>
+              </div>
+              <div id="verify-progress-label" class="progress-label"></div>
             </div>
 
             <div id="verify-result-card" class="card full-width hidden result-card">

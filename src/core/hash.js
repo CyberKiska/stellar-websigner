@@ -71,9 +71,13 @@ export async function computeDigests(bytes) {
   };
 }
 
-export function createSha256Stream() {
+export function createSha256Stream(options = {}) {
   ensureSubtle();
 
+  const nativeThreshold =
+    Number.isInteger(options.nativeThreshold) && options.nativeThreshold >= 0
+      ? options.nativeThreshold
+      : SHA256_NATIVE_THRESHOLD_BYTES;
   let chunks = [];
   let bufferedLength = 0;
   let streaming = null;
@@ -84,6 +88,7 @@ export function createSha256Stream() {
       streaming = createSha256StreamingState();
       for (const chunk of chunks) {
         streaming.update(chunk);
+        chunk.fill(0);
       }
       chunks = [];
     }
@@ -101,7 +106,7 @@ export function createSha256Stream() {
       }
 
       const nextLength = bufferedLength + chunk.length;
-      if (nextLength <= SHA256_NATIVE_THRESHOLD_BYTES) {
+      if (nextLength <= nativeThreshold) {
         chunks.push(chunk.slice());
         bufferedLength = nextLength;
         return;
@@ -118,6 +123,7 @@ export function createSha256Stream() {
 
       if (!streaming && (await hasNativeSha3_512())) {
         const input = concatBufferedChunks(chunks, bufferedLength);
+        wipeChunks(chunks);
         chunks = [];
         try {
           const digest = await globalThis.crypto.subtle.digest('SHA-256', input);
@@ -177,6 +183,12 @@ function concatBufferedChunks(chunks, totalLength) {
     offset += chunk.length;
   }
   return out;
+}
+
+function wipeChunks(chunks) {
+  for (const chunk of chunks) {
+    chunk.fill(0);
+  }
 }
 
 function createSha256StreamingState() {

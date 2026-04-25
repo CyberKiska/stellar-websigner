@@ -667,9 +667,16 @@ button:focus-visible {
   color: var(--accent-warning);
 }
 
-.hash-progress {
+.progress-row {
   margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.hash-progress {
   width: 100%;
+  min-width: 0;
 }
 
 .progress-label {

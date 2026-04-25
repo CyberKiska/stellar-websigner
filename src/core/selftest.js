@@ -271,6 +271,54 @@ export async function runSelfTest() {
       }
     }),
 
+    createResult('file input context abort wipes active chunk', async () => {
+      const bytes = makeDeterministicBytes(4096, 0x87654321);
+      const chunkCopies = [];
+      const controller = new AbortController();
+      const file = {
+        name: 'abort-stream.bin',
+        size: bytes.length,
+        lastModified: 1700000000001,
+        slice(start, end) {
+          return {
+            async arrayBuffer() {
+              const copy = bytes.slice(start, end);
+              chunkCopies.push(copy);
+              return copy.buffer;
+            },
+          };
+        },
+      };
+
+      let thrown = null;
+      try {
+        await createFileInputContext(file, {
+          chunkSize: 1024,
+          keepBytes: true,
+          signal: controller.signal,
+          onProgress(item) {
+            if (item.phase === 'read') controller.abort();
+          },
+        });
+      } catch (err) {
+        thrown = err;
+      }
+
+      if (!thrown || thrown.name !== 'AbortError') {
+        throw new Error(`Expected AbortError, got ${thrown?.name || 'none'}.`);
+      }
+      if (chunkCopies.length === 0) {
+        throw new Error('Expected at least one chunk allocation before abort.');
+      }
+      for (const chunk of chunkCopies) {
+        for (const value of chunk) {
+          if (value !== 0) {
+            throw new Error('Aborted file chunk was not wiped.');
+          }
+        }
+      }
+    }),
+
     createResult('SEP-53 local signing avoids duplicate input buffer', async () => {
       if (typeof process === 'undefined' || typeof process.memoryUsage !== 'function') {
         return;

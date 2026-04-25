@@ -18,6 +18,9 @@ export function setupVerifyTab(state) {
   const sigFileInput = byId('verify-sig-file');
   const expectedSignerEl = byId('verify-expected-signer');
   const runBtn = byId('verify-run');
+  const cancelBtn = byId('verify-cancel');
+  const progressEl = byId('verify-progress');
+  const progressLabelEl = byId('verify-progress-label');
 
   const resultCard = byId('verify-result-card');
   const resultTitle = byId('verify-result-title');
@@ -34,6 +37,7 @@ export function setupVerifyTab(state) {
   let contextBusy = false;
   let autoExpectedSigner = '';
   let expectedSignerOverridden = false;
+  let activeAbortController = null;
 
   function setResultCardMode(mode) {
     resultCard.classList.remove('valid', 'invalid', 'warning');
@@ -86,6 +90,75 @@ export function setupVerifyTab(state) {
     runBtn.disabled = contextBusy || !hasReadyInputContext() || !hasSignatureReady();
   }
 
+  function resetProgress() {
+    progressEl.classList.add('hidden');
+    progressEl.value = 0;
+    progressLabelEl.textContent = '';
+  }
+
+  function setProgress({ phase, loaded = 0, total = 0, message = '' }) {
+    progressEl.classList.remove('hidden');
+    let value = progressEl.value;
+    if (phase === 'read' || phase === 'done') {
+      value = total > 0 ? Math.round((loaded / total) * 100) : 100;
+    } else if (phase === 'digest') {
+      value = Math.max(value, 97);
+    } else if (phase === 'start') {
+      value = 0;
+    }
+    progressEl.value = Math.min(100, Math.max(0, value));
+    progressLabelEl.textContent = message || '';
+  }
+
+  function isAbortError(err) {
+    return err?.name === 'AbortError';
+  }
+
+  function makeAbortError(message = 'Operation cancelled.') {
+    const err = new Error(message);
+    err.name = 'AbortError';
+    return err;
+  }
+
+  function beginAbortableOperation() {
+    if (activeAbortController) {
+      activeAbortController.abort(makeAbortError());
+    }
+    const controller = new AbortController();
+    activeAbortController = controller;
+    cancelBtn.classList.remove('hidden');
+    cancelBtn.disabled = false;
+    return controller;
+  }
+
+  function finishAbortableOperation(controller) {
+    if (activeAbortController !== controller) return;
+    activeAbortController = null;
+    cancelBtn.classList.add('hidden');
+    cancelBtn.disabled = true;
+  }
+
+  function cancelActiveOperation() {
+    if (!activeAbortController) return;
+    const controller = activeAbortController;
+    controller.abort(makeAbortError());
+    cancelBtn.disabled = true;
+    contextBusy = false;
+    clearInputContext();
+    updateRunAvailability();
+    requestAnimationFrame(() => {
+      if (activeAbortController === controller) {
+        cancelBtn.classList.add('hidden');
+        resetProgress();
+      }
+    });
+  }
+
+  function throwIfAborted(signal) {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error ? signal.reason : makeAbortError();
+  }
+
   function syncExpectedSignerFromSession() {
     const loadedSigner = String(state.keys.signerAddress || '').trim();
     if (!expectedSignerOverridden || expectedSignerEl.value.trim() === autoExpectedSigner) {
@@ -95,7 +168,8 @@ export function setupVerifyTab(state) {
     }
   }
 
-  async function buildInputContext({ strict = false, requireBytes = false } = {}) {
+  async function buildInputContext({ strict = false, requireBytes = false, signal = null } = {}) {
+    throwIfAborted(signal);
     if (getMode() === 'file') {
       const file = selectedFile();
       if (!file) {
@@ -109,7 +183,9 @@ export function setupVerifyTab(state) {
       ) {
         return state.verify.inputContext;
       }
-      return createFileInputContext(file, { keepBytes: requireBytes });
+      const context = await createFileInputContext(file, { keepBytes: requireBytes, onProgress: setProgress, signal });
+      throwIfAborted(signal);
+      return context;
     }
 
     const text = textInput.value;
@@ -117,15 +193,19 @@ export function setupVerifyTab(state) {
       if (strict) throw new Error('Enter original plain text for verification.');
       return null;
     }
-    return createTextInputContext(text, { keepBytes: requireBytes });
+    return createTextInputContext(text, { keepBytes: requireBytes, signal });
   }
 
-  async function refreshDigestContext({ strict = false } = {}) {
+  async function refreshDigestContext({ strict = false, signal = null, silent = false } = {}) {
     const nonce = ++refreshNonce;
-    contextBusy = true;
-    updateRunAvailability();
+    const controller = signal ? null : beginAbortableOperation();
+    const opSignal = signal || controller.signal;
+    if (controller) {
+      contextBusy = true;
+      updateRunAvailability();
+    }
     try {
-      const context = await buildInputContext({ strict, requireBytes: false });
+      const context = await buildInputContext({ strict, requireBytes: false, signal: opSignal });
       if (nonce !== refreshNonce) return null;
       clearInputContext();
       state.verify.inputContext = context;
@@ -133,11 +213,17 @@ export function setupVerifyTab(state) {
     } catch (err) {
       if (nonce !== refreshNonce) return null;
       clearInputContext();
+      resetProgress();
+      if (isAbortError(err)) {
+        if (!silent) appendLog(logEl, 'Digest operation cancelled.');
+        return null;
+      }
       if (strict) throw err;
       return null;
     } finally {
       if (nonce === refreshNonce) {
-        contextBusy = false;
+        if (controller) contextBusy = false;
+        if (controller) finishAbortableOperation(controller);
         updateRunAvailability();
       }
     }
@@ -197,35 +283,39 @@ export function setupVerifyTab(state) {
   }
 
   modeFileEl.addEventListener('change', async () => {
+    cancelActiveOperation();
     applyModeUi();
     clearInputContext();
     updateRunAvailability();
     if (selectedFile()) {
-      await refreshDigestContext();
+      await refreshDigestContext({ silent: true });
     }
   });
 
   modeTextEl.addEventListener('change', async () => {
+    cancelActiveOperation();
     applyModeUi();
     clearInputContext();
     updateRunAvailability();
     if (modeTextEl.checked) {
-      await refreshDigestContext();
+      await refreshDigestContext({ silent: true });
     }
   });
 
   fileInput.addEventListener('change', async () => {
+    cancelActiveOperation();
     clearInputContext();
     updateRunAvailability();
     if (selectedFile()) {
-      await refreshDigestContext();
+      await refreshDigestContext({ silent: true });
     }
   });
 
   textInput.addEventListener('input', async () => {
+    cancelActiveOperation();
     clearInputContext();
     updateRunAvailability();
-    await refreshDigestContext();
+    await refreshDigestContext({ silent: true });
   });
 
   sigFileInput.addEventListener('change', () => {
@@ -242,9 +332,10 @@ export function setupVerifyTab(state) {
       textInput.value = text;
       modeTextEl.checked = true;
       modeFileEl.checked = false;
+      cancelActiveOperation();
       applyModeUi();
       clearInputContext();
-      await refreshDigestContext();
+      await refreshDigestContext({ silent: true });
       showToast('success', `Pasted ${text.length} characters.`);
     } catch (err) {
       showToast('error', friendlyError(err));
@@ -257,28 +348,42 @@ export function setupVerifyTab(state) {
 
   runBtn.addEventListener('click', async () => {
     const previousLabel = runBtn.textContent;
+    const controller = beginAbortableOperation();
     let operationContext = null;
+    contextBusy = true;
     runBtn.disabled = true;
     runBtn.textContent = 'Verifying...';
     resultCard.classList.add('hidden');
 
     try {
+      setProgress({ phase: 'start', message: 'Preparing verification...' });
       const signatureDoc = await readSignatureDoc();
+      throwIfAborted(controller.signal);
       const requiresBytes = signatureDocRequiresInputBytes(signatureDoc);
       operationContext = requiresBytes
-        ? await buildInputContext({ strict: true, requireBytes: true })
-        : await refreshDigestContext({ strict: true });
+        ? await buildInputContext({ strict: true, requireBytes: true, signal: controller.signal })
+        : await refreshDigestContext({ strict: true, signal: controller.signal });
+      if (!operationContext) throw makeAbortError();
+      throwIfAborted(controller.signal);
 
       const expectedSigner = expectedSignerEl.value.trim();
       if (expectedSigner) {
         decodeEd25519PublicKey(expectedSigner);
       }
+      throwIfAborted(controller.signal);
+      setProgress({
+        phase: 'digest',
+        loaded: operationContext.fileSize,
+        total: operationContext.fileSize,
+        message: 'Verifying signature...',
+      });
 
       const report = await verifyDetachedSignature({
         signatureDoc,
         inputContext: operationContext,
         expectedSigner,
       });
+      throwIfAborted(controller.signal);
 
       renderReport(report);
       appendLog(
@@ -286,6 +391,12 @@ export function setupVerifyTab(state) {
         `Verification completed: ${report.summary} signer=${report.signer || '-'} expected=${expectedSigner || '-'}`
       );
     } catch (err) {
+      if (isAbortError(err)) {
+        resultCard.classList.add('hidden');
+        appendLog(logEl, 'Verification cancelled.');
+        showToast('warning', 'Verification cancelled.');
+        return;
+      }
       const message = friendlyError(err);
       resultCard.classList.remove('hidden');
       setResultCardMode('invalid');
@@ -303,10 +414,15 @@ export function setupVerifyTab(state) {
       if (operationContext && operationContext !== state.verify.inputContext) {
         wipeInputBytes(operationContext);
       }
+      contextBusy = false;
+      finishAbortableOperation(controller);
+      resetProgress();
       runBtn.textContent = previousLabel;
       updateRunAvailability();
     }
   });
+
+  cancelBtn.addEventListener('click', cancelActiveOperation);
 
   copySignerBtn.addEventListener('click', async () => {
     try {
@@ -318,10 +434,14 @@ export function setupVerifyTab(state) {
   });
 
   window.addEventListener('keys:updated', syncExpectedSignerFromSession);
-  registerSessionWipeHandler(clearInputContext);
+  registerSessionWipeHandler(() => {
+    cancelActiveOperation();
+    clearInputContext();
+  });
 
   applyModeUi();
   syncExpectedSignerFromSession();
   resultBadge.setAttribute('aria-label', 'Verification result: neutral');
+  resetProgress();
   updateRunAvailability();
 }

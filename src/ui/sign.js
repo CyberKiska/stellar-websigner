@@ -32,6 +32,7 @@ export function setupSignTab(state) {
 
   const hashProgressEl = byId('sign-hash-progress');
   const hashProgressLabelEl = byId('sign-hash-progress-label');
+  const cancelBtn = byId('sign-cancel');
 
   const localRunBtn = byId('sign-local-run');
   const localPanelEl = byId('sign-local-panel');
@@ -64,6 +65,8 @@ export function setupSignTab(state) {
   let textDigestTimer = null;
   let refreshNonce = 0;
   let contextBusy = false;
+  let activeAbortController = null;
+  let progressResetTimer = null;
 
   function syncSigningModePanels() {
     const hasSeed = Boolean(state.keys.seedBytes);
@@ -118,9 +121,15 @@ export function setupSignTab(state) {
   }
 
   function resetHashProgress() {
+    clearTimeout(progressResetTimer);
     hashProgressEl.classList.add('hidden');
     hashProgressEl.value = 0;
     hashProgressLabelEl.textContent = '';
+  }
+
+  function scheduleHashProgressReset(delay = 350) {
+    clearTimeout(progressResetTimer);
+    progressResetTimer = setTimeout(() => resetHashProgress(), delay);
   }
 
   function setHashProgress({ phase, loaded = 0, total = 0, message = '' }) {
@@ -137,6 +146,55 @@ export function setupSignTab(state) {
 
     hashProgressEl.value = Math.min(100, Math.max(0, value));
     hashProgressLabelEl.textContent = message || '';
+  }
+
+  function isAbortError(err) {
+    return err?.name === 'AbortError';
+  }
+
+  function makeAbortError(message = 'Operation cancelled.') {
+    const err = new Error(message);
+    err.name = 'AbortError';
+    return err;
+  }
+
+  function beginAbortableOperation() {
+    if (activeAbortController) {
+      activeAbortController.abort(makeAbortError());
+    }
+    const controller = new AbortController();
+    activeAbortController = controller;
+    cancelBtn.classList.remove('hidden');
+    cancelBtn.disabled = false;
+    return controller;
+  }
+
+  function finishAbortableOperation(controller) {
+    if (activeAbortController !== controller) return;
+    activeAbortController = null;
+    cancelBtn.classList.add('hidden');
+    cancelBtn.disabled = true;
+  }
+
+  function cancelActiveOperation() {
+    if (!activeAbortController) return;
+    const controller = activeAbortController;
+    controller.abort(makeAbortError());
+    cancelBtn.disabled = true;
+    contextBusy = false;
+    clearCurrentInputContext();
+    updateActionAvailability();
+    requestAnimationFrame(() => {
+      if (activeAbortController === controller) {
+        cancelBtn.classList.add('hidden');
+        resetHashProgress();
+      }
+    });
+  }
+
+  function throwIfAborted(signal) {
+    if (!signal?.aborted) return;
+    throw signal.reason instanceof Error ? signal.reason : makeAbortError();
   }
 
   function fileCacheKey(file) {
@@ -213,8 +271,9 @@ export function setupSignTab(state) {
     );
   }
 
-  async function buildInputContext({ strict = false, requireBytes = false } = {}) {
+  async function buildInputContext({ strict = false, requireBytes = false, signal = null } = {}) {
     const mode = getInputMode();
+    throwIfAborted(signal);
 
     if (mode === 'file') {
       const file = fileInput.files?.[0] ?? null;
@@ -232,7 +291,7 @@ export function setupSignTab(state) {
             total: file.size,
             message: `Digests loaded from cache for ${file.name}.`,
           });
-          setTimeout(() => resetHashProgress(), 600);
+          scheduleHashProgressReset(600);
           return cached;
         }
       }
@@ -240,12 +299,14 @@ export function setupSignTab(state) {
       const context = await createFileInputContext(file, {
         onProgress: setHashProgress,
         keepBytes: requireBytes,
+        signal,
       });
+      throwIfAborted(signal);
 
       if (!requireBytes) {
         putCachedFileContext(file, context);
       }
-      setTimeout(() => resetHashProgress(), 350);
+      scheduleHashProgressReset();
       return context;
     }
 
@@ -255,15 +316,16 @@ export function setupSignTab(state) {
       return null;
     }
     resetHashProgress();
-    return createTextInputContext(text, { keepBytes: requireBytes });
+    return createTextInputContext(text, { keepBytes: requireBytes, signal });
   }
 
   async function refreshDigestContext({ strict = false, silent = false } = {}) {
     const nonce = ++refreshNonce;
+    const controller = beginAbortableOperation();
     contextBusy = true;
     updateActionAvailability();
     try {
-      const context = await buildInputContext({ strict, requireBytes: false });
+      const context = await buildInputContext({ strict, requireBytes: false, signal: controller.signal });
       if (nonce !== refreshNonce) return null;
 
       clearCurrentInputContext();
@@ -274,6 +336,10 @@ export function setupSignTab(state) {
       if (nonce !== refreshNonce) return null;
       clearCurrentInputContext();
       resetHashProgress();
+      if (isAbortError(err)) {
+        if (!silent) appendLog(logEl, 'Digest operation cancelled.');
+        return null;
+      }
       if (strict) throw err;
       if (!silent) {
         appendLog(logEl, `Digest context reset: ${friendlyError(err)}`);
@@ -282,6 +348,7 @@ export function setupSignTab(state) {
     } finally {
       if (nonce === refreshNonce) {
         contextBusy = false;
+        finishAbortableOperation(controller);
         updateActionAvailability();
       }
     }
@@ -337,7 +404,7 @@ export function setupSignTab(state) {
     setStatusBox(statusEl, 'valid', statusMessage);
   }
 
-  async function runLocalSign() {
+  async function runLocalSign(signal) {
     if (!state.keys.seedBytes) {
       showToast('warning', 'Load secret seed in Keys tab first.');
       setStatusBox(statusEl, 'invalid', 'Local signing requires loaded S... seed.');
@@ -346,12 +413,20 @@ export function setupSignTab(state) {
 
     let context = null;
     try {
-      context = await buildInputContext({ strict: true, requireBytes: true });
+      context = await buildInputContext({ strict: true, requireBytes: true, signal });
+      throwIfAborted(signal);
+      setHashProgress({
+        phase: 'digest',
+        loaded: context.fileSize,
+        total: context.fileSize,
+        message: 'Signing content...',
+      });
       const result = await createLocalSep53MessageSignature({
         inputContext: context,
         seedBytes: state.keys.seedBytes,
         signerAddress: state.keys.signerAddress,
       });
+      throwIfAborted(signal);
 
       const signedHashes = result.doc.hashes.map((item) => item.alg).join(', ');
       setSignatureOutput(result, `Content signature created locally (${signedHashes}).`);
@@ -364,6 +439,7 @@ export function setupSignTab(state) {
 
   async function runXdrDraft() {
     const context = await refreshDigestContext({ strict: true });
+    if (!context) throw makeAbortError();
     const draft = createXdrProofDraft({
       inputContext: context,
       signerAddress: state.keys.signerAddress || '',
@@ -383,6 +459,7 @@ export function setupSignTab(state) {
 
   async function runXdrProofCreate() {
     const context = await refreshDigestContext({ strict: true });
+    if (!context) throw makeAbortError();
     const signedXdr = xdrSignedXdrEl.value.trim();
     if (!signedXdr) {
       throw new Error('Paste signed XDR first.');
@@ -409,6 +486,7 @@ export function setupSignTab(state) {
   }
 
   function handleInputChanged() {
+    cancelActiveOperation();
     resetOutput();
     resetXdrDraft();
     clearCurrentInputContext();
@@ -469,18 +547,28 @@ export function setupSignTab(state) {
 
   localRunBtn.addEventListener('click', async () => {
     const previousLabel = localRunBtn.textContent;
+    const controller = beginAbortableOperation();
     contextBusy = true;
     updateActionAvailability();
     localRunBtn.textContent = 'Signing...';
     try {
-      await runLocalSign();
+      await runLocalSign(controller.signal);
     } catch (err) {
+      if (isAbortError(err)) {
+        resetOutput();
+        setStatusBox(statusEl, 'neutral', 'Signing cancelled.');
+        appendLog(logEl, 'Local signing cancelled.');
+        showToast('warning', 'Signing cancelled.');
+        return;
+      }
       const msg = friendlyError(err);
       setStatusBox(statusEl, 'invalid', msg);
       appendLog(logEl, `Local signing failed: ${msg}`);
       showToast('error', msg);
     } finally {
       contextBusy = false;
+      finishAbortableOperation(controller);
+      resetHashProgress();
       localRunBtn.textContent = previousLabel;
       updateActionAvailability();
     }
@@ -492,6 +580,12 @@ export function setupSignTab(state) {
     try {
       await runXdrDraft();
     } catch (err) {
+      if (isAbortError(err)) {
+        setStatusBox(statusEl, 'neutral', 'Unsigned XDR generation cancelled.');
+        appendLog(logEl, 'Unsigned XDR generation cancelled.');
+        showToast('warning', 'Operation cancelled.');
+        return;
+      }
       const msg = friendlyError(err);
       setStatusBox(statusEl, 'invalid', msg);
       appendLog(logEl, `Unsigned XDR generation failed: ${msg}`);
@@ -517,6 +611,12 @@ export function setupSignTab(state) {
     try {
       await runXdrProofCreate();
     } catch (err) {
+      if (isAbortError(err)) {
+        setStatusBox(statusEl, 'neutral', 'XDR proof creation cancelled.');
+        appendLog(logEl, 'XDR proof creation cancelled.');
+        showToast('warning', 'Operation cancelled.');
+        return;
+      }
       const msg = friendlyError(err);
       setStatusBox(statusEl, 'invalid', msg);
       appendLog(logEl, `XDR proof creation failed: ${msg}`);
@@ -530,6 +630,8 @@ export function setupSignTab(state) {
   xdrSignedXdrEl.addEventListener('input', () => {
     updateActionAvailability();
   });
+
+  cancelBtn.addEventListener('click', cancelActiveOperation);
 
   copySignerBtn.addEventListener('click', async () => {
     try {
@@ -576,6 +678,7 @@ export function setupSignTab(state) {
   updateActionAvailability();
 
   registerSessionWipeHandler(() => {
+    cancelActiveOperation();
     clearCurrentInputContext();
     wipeCachedInputContexts();
     resetXdrDraft();
