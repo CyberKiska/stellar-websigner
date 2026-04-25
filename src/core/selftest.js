@@ -114,6 +114,25 @@ function makeDeterministicBytes(size, seed) {
   return out;
 }
 
+function makePlaceholderDigests() {
+  const sha256Bytes = new Uint8Array(32);
+  const sha3Bytes = new Uint8Array(64);
+  return {
+    sha256: {
+      alg: HASH_ALG.SHA256,
+      bytes: sha256Bytes,
+      hex: bytesToHexLower(sha256Bytes),
+      base64: bytesToBase64(sha256Bytes),
+    },
+    sha3_512: {
+      alg: HASH_ALG.SHA3_512,
+      bytes: sha3Bytes,
+      hex: bytesToHexLower(sha3Bytes),
+      base64: bytesToBase64(sha3Bytes),
+    },
+  };
+}
+
 export async function runSelfTest() {
   const results = [];
 
@@ -248,6 +267,55 @@ export async function runSelfTest() {
       for (let i = 0; i < bytes.length; i += 1) {
         if (buffered.bytes[i] !== bytes[i]) {
           throw new Error('Buffered file context byte mismatch.');
+        }
+      }
+    }),
+
+    createResult('SEP-53 local signing avoids duplicate input buffer', async () => {
+      if (typeof process === 'undefined' || typeof process.memoryUsage !== 'function') {
+        return;
+      }
+
+      const size = 64 * 1024 * 1024;
+      const bytes = new Uint8Array(size);
+      for (let i = 0; i < bytes.length; i += 4096) {
+        bytes[i] = (i >>> 12) & 0xff;
+      }
+
+      const seed = hexToBytes('2222222222222222222222222222222222222222222222222222222222222222');
+      const inputContext = {
+        type: 'file',
+        fileName: 'large-sep53-memory.bin',
+        fileSize: bytes.length,
+        fileLastModified: 0,
+        bytes,
+        digests: makePlaceholderDigests(),
+      };
+
+      globalThis.gc?.();
+      const before = process.memoryUsage();
+      const result = await createLocalSep53MessageSignature({
+        inputContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+      const after = process.memoryUsage();
+
+      if (!result.signatureB64 || result.signatureB64.length === 0) {
+        throw new Error('Expected large SEP-53 signature output.');
+      }
+
+      const heapDelta = after.heapUsed - before.heapUsed;
+      const heapLimit = 24 * 1024 * 1024;
+      if (heapDelta > heapLimit) {
+        throw new Error(`SEP-53 signing heap delta too high: ${heapDelta} bytes.`);
+      }
+
+      if (Number.isFinite(before.arrayBuffers) && Number.isFinite(after.arrayBuffers)) {
+        const arrayBufferDelta = after.arrayBuffers - before.arrayBuffers;
+        const arrayBufferLimit = 16 * 1024 * 1024;
+        if (arrayBufferDelta > arrayBufferLimit) {
+          throw new Error(`SEP-53 signing ArrayBuffer delta too high: ${arrayBufferDelta} bytes.`);
         }
       }
     }),
