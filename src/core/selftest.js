@@ -1,6 +1,6 @@
 import { base64ToBytes, bytesToBase64, bytesToHexLower, hexToBytes, utf8ToBytes } from './bytes.js';
 import { derivePublicKeyFromSeed, generateKeypair, signatureHint, signBytesWithSeed } from './ed25519.js';
-import { computeDigests } from './hash.js';
+import { computeDigests, sha3_512 } from './hash.js';
 import { HASH_ALG, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
 import { SEP53_CANONICAL_TEST_VECTORS } from './sep53-test-vectors.js';
@@ -82,10 +82,51 @@ async function assertFileSignVerifyForSize(size) {
   }
 }
 
+async function assertSha3_512Hex(name, bytes, expectedHex) {
+  const actualHex = bytesToHexLower(await sha3_512(bytes));
+  if (actualHex !== expectedHex) {
+    throw new Error(`${name}: expected ${expectedHex}, got ${actualHex}.`);
+  }
+}
+
 export async function runSelfTest() {
   const results = [];
 
   const tests = [
+    createResult('sha3-512 fallback vectors', async () => {
+      const vectors = [
+        [
+          'empty',
+          new Uint8Array(0),
+          'a69f73cca23a9ac5c8b567dc185a756e97c982164fe25859e0d1dcc1475c80a615b2123af1f5f94c11e3e9402c3ac558f500199d95b6d3e301758586281dcd26',
+        ],
+        [
+          'abc',
+          utf8ToBytes('abc'),
+          'b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0',
+        ],
+        [
+          '71-byte rate boundary',
+          new Uint8Array(71).fill(0x41),
+          'e9e7f1016227a4d58c3a2c597adc2f58de10b6e78f17ff079624fede5eb8341bf0ebeda4f8296d5a070751ab3b7ffa48d35950f793e21f9c16c095b3b354da5e',
+        ],
+        [
+          '72-byte rate boundary',
+          new Uint8Array(72).fill(0x41),
+          'dbbb35fbed5f380b3c29bf4a42ad47a0f9d77ca8622f2a64b1ef0655a2bb978542bc579167647de0903e454dd45316c8c4878aade59e9f663df4d9327b333eef',
+        ],
+        [
+          '73-byte rate boundary',
+          new Uint8Array(73).fill(0x41),
+          'a4d32577ac925077aacdc65964041ba05d9058596f6157937f8748e4a1833aa7c954a4e45c4e1132a52737c675d3f9edae3018c51ba388f540bcc4590b4e293d',
+        ],
+      ];
+
+      for (const [name, bytes, expectedHex] of vectors) {
+        await assertSha3_512Hex(name, bytes, expectedHex);
+      }
+    }),
+
     createResult('strkey roundtrip', async () => {
       const seed = hexToBytes('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f');
       const encoded = encodeEd25519SecretSeed(seed);

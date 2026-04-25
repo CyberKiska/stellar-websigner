@@ -1,36 +1,23 @@
 import { bytesToBase64, bytesToHexLower } from './bytes.js';
 
-const MASK_64 = (1n << 64n) - 1n;
-const KECCAK_ROUND_CONSTANTS = [
-  0x0000000000000001n,
-  0x0000000000008082n,
-  0x800000000000808an,
-  0x8000000080008000n,
-  0x000000000000808bn,
-  0x0000000080000001n,
-  0x8000000080008081n,
-  0x8000000000008009n,
-  0x000000000000008an,
-  0x0000000000000088n,
-  0x0000000080008009n,
-  0x000000008000000an,
-  0x000000008000808bn,
-  0x800000000000008bn,
-  0x8000000000008089n,
-  0x8000000000008003n,
-  0x8000000000008002n,
-  0x8000000000000080n,
-  0x000000000000800an,
-  0x800000008000000an,
-  0x8000000080008081n,
-  0x8000000000008080n,
-  0x0000000080000001n,
-  0x8000000080008008n,
-];
+const SHA3_512_RATE_BYTES = 72;
+const SHA3_512_OUTPUT_BYTES = 64;
 
-const KECCAK_ROTATION_OFFSETS = [
+const KECCAK_ROUND_CONSTANTS_LO = new Uint32Array([
+  0x00000001, 0x00008082, 0x0000808a, 0x80008000, 0x0000808b, 0x80000001, 0x80008081, 0x00008009,
+  0x0000008a, 0x00000088, 0x80008009, 0x8000000a, 0x8000808b, 0x0000008b, 0x00008089, 0x00008003,
+  0x00008002, 0x00000080, 0x0000800a, 0x8000000a, 0x80008081, 0x00008080, 0x80000001, 0x80008008,
+]);
+
+const KECCAK_ROUND_CONSTANTS_HI = new Uint32Array([
+  0x00000000, 0x00000000, 0x80000000, 0x80000000, 0x00000000, 0x00000000, 0x80000000, 0x80000000,
+  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x80000000, 0x80000000, 0x80000000,
+  0x80000000, 0x80000000, 0x00000000, 0x80000000, 0x80000000, 0x80000000, 0x00000000, 0x80000000,
+]);
+
+const KECCAK_ROTATION_OFFSETS = new Uint8Array([
   0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14,
-];
+]);
 
 export async function sha256(bytes) {
   ensureSubtle();
@@ -73,75 +60,103 @@ function ensureSubtle() {
 }
 
 function sha3_512_fallback(input) {
-  const rateInBytes = 72;
-  const outputLength = 64;
-  const state = new Array(25).fill(0n);
+  const stateLo = new Uint32Array(25);
+  const stateHi = new Uint32Array(25);
+  const bLo = new Uint32Array(25);
+  const bHi = new Uint32Array(25);
+  const cLo = new Uint32Array(5);
+  const cHi = new Uint32Array(5);
+  const dLo = new Uint32Array(5);
+  const dHi = new Uint32Array(5);
 
   let offset = 0;
-  while (offset + rateInBytes <= input.length) {
-    absorbBlock(state, input.subarray(offset, offset + rateInBytes), rateInBytes);
-    keccakF1600(state);
-    offset += rateInBytes;
+  while (offset + SHA3_512_RATE_BYTES <= input.length) {
+    absorbBlock(stateLo, stateHi, input, offset);
+    keccakF1600(stateLo, stateHi, bLo, bHi, cLo, cHi, dLo, dHi);
+    offset += SHA3_512_RATE_BYTES;
   }
 
-  const lastBlock = new Uint8Array(rateInBytes);
+  const lastBlock = new Uint8Array(SHA3_512_RATE_BYTES);
   lastBlock.set(input.subarray(offset));
   lastBlock[input.length - offset] ^= 0x06;
-  lastBlock[rateInBytes - 1] ^= 0x80;
+  lastBlock[SHA3_512_RATE_BYTES - 1] ^= 0x80;
 
-  absorbBlock(state, lastBlock, rateInBytes);
-  keccakF1600(state);
+  absorbBlock(stateLo, stateHi, lastBlock, 0);
+  keccakF1600(stateLo, stateHi, bLo, bHi, cLo, cHi, dLo, dHi);
 
-  const out = new Uint8Array(outputLength);
-  let outOffset = 0;
-  for (let lane = 0; lane < rateInBytes / 8 && outOffset < outputLength; lane += 1) {
-    const value = state[lane];
-    for (let i = 0; i < 8 && outOffset < outputLength; i += 1) {
-      out[outOffset] = Number((value >> BigInt(8 * i)) & 0xffn);
-      outOffset += 1;
-    }
+  const out = new Uint8Array(SHA3_512_OUTPUT_BYTES);
+  for (let lane = 0; lane < SHA3_512_OUTPUT_BYTES / 8; lane += 1) {
+    const laneOffset = lane * 8;
+    const lo = stateLo[lane];
+    const hi = stateHi[lane];
+    out[laneOffset] = lo;
+    out[laneOffset + 1] = lo >>> 8;
+    out[laneOffset + 2] = lo >>> 16;
+    out[laneOffset + 3] = lo >>> 24;
+    out[laneOffset + 4] = hi;
+    out[laneOffset + 5] = hi >>> 8;
+    out[laneOffset + 6] = hi >>> 16;
+    out[laneOffset + 7] = hi >>> 24;
   }
 
   return out;
 }
 
-function absorbBlock(state, block, rateInBytes) {
-  const lanes = rateInBytes / 8;
+function absorbBlock(stateLo, stateHi, block, offset) {
+  const lanes = SHA3_512_RATE_BYTES / 8;
   for (let lane = 0; lane < lanes; lane += 1) {
-    let value = 0n;
-    const laneOffset = lane * 8;
-    for (let i = 0; i < 8; i += 1) {
-      value |= BigInt(block[laneOffset + i]) << BigInt(i * 8);
-    }
-    state[lane] ^= value;
+    const laneOffset = offset + lane * 8;
+    stateLo[lane] ^=
+      (block[laneOffset] |
+        (block[laneOffset + 1] << 8) |
+        (block[laneOffset + 2] << 16) |
+        (block[laneOffset + 3] << 24)) >>>
+      0;
+    stateHi[lane] ^=
+      (block[laneOffset + 4] |
+        (block[laneOffset + 5] << 8) |
+        (block[laneOffset + 6] << 16) |
+        (block[laneOffset + 7] << 24)) >>>
+      0;
   }
 }
 
-function rotl64(value, shift) {
-  const s = BigInt(shift % 64);
-  if (s === 0n) {
-    return value & MASK_64;
+function rotl64Into(lo, hi, shift, outLo, outHi, lane) {
+  if (shift === 0) {
+    outLo[lane] = lo;
+    outHi[lane] = hi;
+  } else if (shift < 32) {
+    outLo[lane] = (lo << shift) | (hi >>> (32 - shift));
+    outHi[lane] = (hi << shift) | (lo >>> (32 - shift));
+  } else if (shift === 32) {
+    outLo[lane] = hi;
+    outHi[lane] = lo;
+  } else {
+    const s = shift - 32;
+    outLo[lane] = (hi << s) | (lo >>> (32 - s));
+    outHi[lane] = (lo << s) | (hi >>> (32 - s));
   }
-  return ((value << s) | (value >> (64n - s))) & MASK_64;
 }
 
-function keccakF1600(state) {
-  const b = new Array(25).fill(0n);
-  const c = new Array(5).fill(0n);
-  const d = new Array(5).fill(0n);
-
+function keccakF1600(stateLo, stateHi, bLo, bHi, cLo, cHi, dLo, dHi) {
   for (let round = 0; round < 24; round += 1) {
     for (let x = 0; x < 5; x += 1) {
-      c[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
+      cLo[x] = stateLo[x] ^ stateLo[x + 5] ^ stateLo[x + 10] ^ stateLo[x + 15] ^ stateLo[x + 20];
+      cHi[x] = stateHi[x] ^ stateHi[x + 5] ^ stateHi[x + 10] ^ stateHi[x + 15] ^ stateHi[x + 20];
     }
 
     for (let x = 0; x < 5; x += 1) {
-      d[x] = c[(x + 4) % 5] ^ rotl64(c[(x + 1) % 5], 1);
+      const x1 = (x + 1) % 5;
+      const x4 = (x + 4) % 5;
+      dLo[x] = cLo[x4] ^ ((cLo[x1] << 1) | (cHi[x1] >>> 31));
+      dHi[x] = cHi[x4] ^ ((cHi[x1] << 1) | (cLo[x1] >>> 31));
     }
 
     for (let x = 0; x < 5; x += 1) {
       for (let y = 0; y < 5; y += 1) {
-        state[x + 5 * y] ^= d[x];
+        const idx = x + 5 * y;
+        stateLo[idx] ^= dLo[x];
+        stateHi[idx] ^= dHi[x];
       }
     }
 
@@ -149,19 +164,21 @@ function keccakF1600(state) {
       for (let y = 0; y < 5; y += 1) {
         const src = x + 5 * y;
         const dst = y + 5 * ((2 * x + 3 * y) % 5);
-        b[dst] = rotl64(state[src], KECCAK_ROTATION_OFFSETS[src]);
+        rotl64Into(stateLo[src], stateHi[src], KECCAK_ROTATION_OFFSETS[src], bLo, bHi, dst);
       }
     }
 
     for (let x = 0; x < 5; x += 1) {
       for (let y = 0; y < 5; y += 1) {
         const idx = x + 5 * y;
-        const b1 = b[((x + 1) % 5) + 5 * y];
-        const b2 = b[((x + 2) % 5) + 5 * y];
-        state[idx] = b[idx] ^ ((~b1 & MASK_64) & b2);
+        const b1 = ((x + 1) % 5) + 5 * y;
+        const b2 = ((x + 2) % 5) + 5 * y;
+        stateLo[idx] = bLo[idx] ^ (~bLo[b1] & bLo[b2]);
+        stateHi[idx] = bHi[idx] ^ (~bHi[b1] & bHi[b2]);
       }
     }
 
-    state[0] ^= KECCAK_ROUND_CONSTANTS[round];
+    stateLo[0] ^= KECCAK_ROUND_CONSTANTS_LO[round];
+    stateHi[0] ^= KECCAK_ROUND_CONSTANTS_HI[round];
   }
 }
