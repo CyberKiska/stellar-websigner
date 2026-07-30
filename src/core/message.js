@@ -115,14 +115,21 @@ function expectedDigestHexLength(alg) {
   return 128;
 }
 
-export function buildInputDescriptor({ type, fileName, fileSize }) {
+export function buildInputDescriptor({ type, fileName, fileSize, mediaType = '' }) {
   const kind = normalizeInputKind(type);
   if (kind === 'file') {
     return {
       type: 'file',
       name: String(fileName || ''),
+      namePolicy: 'exact-basename',
       size: Number(fileSize || 0),
+      mediaType: String(mediaType || '').trim().toLowerCase() || 'application/octet-stream',
     };
   }
-  return { type: 'text', size: Number(fileSize || 0) };
+  return {
+    type: 'text',
+    size: Number(fileSize || 0),
+    mediaType: 'text/plain;charset=utf-8',
+    textEncoding: 'utf-8-dom-value-no-normalization',
+  };
 }

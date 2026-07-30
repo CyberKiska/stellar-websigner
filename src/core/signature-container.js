@@ -1,64 +1,30 @@
-import {
-  PAYLOAD_TYPE,
-  PROOF_TYPE,
-  SIGNATURE_SCHEME,
-  SIGNATURE_SCHEMA_V2,
-} from './constants.js';
+import { canonicalJsonStringify } from './canonical-json.js';
+import { SIGNATURE_SCHEMA_V3 } from './constants.js';
 
-export function createSep53MessageSignatureDocument({
-  signer,
-  signatureB64,
-  input,
-  hashEntries = [],
-}) {
+export function createSep53MessageSignatureDocument({ signer, signatureB64, protectedManifest }) {
   return {
-    schema: SIGNATURE_SCHEMA_V2,
+    schema: SIGNATURE_SCHEMA_V3,
     signer,
-    proofType: PROOF_TYPE.SEP53_MESSAGE,
-    payloadType: PAYLOAD_TYPE.RAW_BYTES,
-    signatureScheme: SIGNATURE_SCHEME.SEP53_SHA256_ED25519,
-    input,
-    hashes: hashEntries,
+    protected: protectedManifest,
     signatureB64,
   };
 }
 
-export function createXdrProofSignatureDocument({
-  signer,
-  networkPassphrase,
-  networkHint,
-  hashEntries,
-  manageDataEntries,
-  txSourceAccount,
-  signedXdr,
-  input,
-}) {
+export function createXdrProofSignatureDocument({ signer, signedXdr, protectedManifest }) {
   return {
-    schema: SIGNATURE_SCHEMA_V2,
+    schema: SIGNATURE_SCHEMA_V3,
     signer,
-    proofType: PROOF_TYPE.XDR_ENVELOPE,
-    payloadType: PAYLOAD_TYPE.DETACHED_DIGESTS,
-    signatureScheme: SIGNATURE_SCHEME.TX_ENVELOPE_ED25519,
-    network: {
-      passphrase: networkPassphrase,
-      hint: networkHint,
-    },
-    hashes: hashEntries,
-    manageData: {
-      entries: manageDataEntries,
-    },
-    txSourceAccount: String(txSourceAccount || ''),
+    protected: protectedManifest,
     signedXdr,
-    input,
   };
 }
 
 export function serializeSignatureDocument(doc, options = {}) {
-  const canonicalDoc = canonicalizeJsonValue(doc);
+  const canonical = canonicalJsonStringify(doc);
   if (options.pretty === true) {
-    return `${JSON.stringify(canonicalDoc, null, 2)}\n`;
+    return `${JSON.stringify(JSON.parse(canonical), null, 2)}\n`;
   }
-  return `${JSON.stringify(canonicalDoc)}\n`;
+  return canonical;
 }
 
 export function suggestSignatureFileName({ inputType, originalName }) {
@@ -69,20 +35,6 @@ export function suggestSignatureFileName({ inputType, originalName }) {
   return 'plain-text.sig';
 }
 
-export function isV2SignatureDocument(signatureDoc) {
-  return String(signatureDoc?.schema || '').trim() === SIGNATURE_SCHEMA_V2;
-}
-
-function canonicalizeJsonValue(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => canonicalizeJsonValue(item));
-  }
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const key of Object.keys(value).sort()) {
-      out[key] = canonicalizeJsonValue(value[key]);
-    }
-    return out;
-  }
-  return value;
+export function isV3SignatureDocument(signatureDoc) {
+  return String(signatureDoc?.schema || '') === SIGNATURE_SCHEMA_V3;
 }

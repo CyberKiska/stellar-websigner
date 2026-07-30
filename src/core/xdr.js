@@ -1,5 +1,5 @@
 import {
-  base64ToBytes,
+  canonicalBase64ToBytes,
   bytesEqual,
   bytesToBase64,
   bytesToUtf8,
@@ -12,6 +12,7 @@ import { MANAGE_DATA_NAME } from './constants.js';
 
 export const ENVELOPE_TYPE_TX = 2;
 export const OPERATION_TYPE_MANAGE_DATA = 10;
+export const MAX_XDR_ENVELOPE_BYTES = 64 * 1024;
 
 const KEY_TYPE_ED25519 = 0;
 const PRECOND_NONE = 0;
@@ -100,7 +101,10 @@ export function encodeSignedTxEnvelope({ txXdr, signatures }) {
 }
 
 export function parseTransactionEnvelope(input) {
-  const raw = input instanceof Uint8Array ? input : base64ToBytes(input);
+  const raw = input instanceof Uint8Array
+    ? input
+    : canonicalBase64ToBytes(input, { maxBytes: MAX_XDR_ENVELOPE_BYTES });
+  if (raw.length > MAX_XDR_ENVELOPE_BYTES) throw new Error('XDR envelope is too large.');
   const reader = new XdrReader(raw);
 
   const envelopeType = reader.readInt32();
@@ -258,24 +262,18 @@ export async function computeTransactionHash(txXdr, networkPassphrase) {
 }
 
 export async function findValidDecoratedSignature(signatures, signerPublicBytes, txHash) {
+  if (!Array.isArray(signatures) || signatures.length !== 1) {
+    throw new Error('This proof profile requires exactly one decorated signature.');
+  }
+  if (!(signatures[0].signature instanceof Uint8Array) || signatures[0].signature.length !== 64) {
+    throw new Error('This proof profile requires one 64-byte Ed25519 signature.');
+  }
   const signerHint = signatureHint(signerPublicBytes);
-
-  for (const item of signatures) {
-    if (!(item.signature instanceof Uint8Array) || item.signature.length !== 64) continue;
-    if (!(item.hint instanceof Uint8Array) || item.hint.length !== 4) continue;
-    if (!bytesEqual(item.hint, signerHint)) continue;
-
-    const ok = await verifyBytesWithPublic(signerPublicBytes, txHash, item.signature);
-    if (ok) return item;
+  const item = signatures[0];
+  if (!(item.hint instanceof Uint8Array) || item.hint.length !== 4 || !bytesEqual(item.hint, signerHint)) {
+    throw new Error('Decorated signature hint does not match the declared signer.');
   }
-
-  for (const item of signatures) {
-    if (!(item.signature instanceof Uint8Array) || item.signature.length !== 64) continue;
-    const ok = await verifyBytesWithPublic(signerPublicBytes, txHash, item.signature);
-    if (ok) return item;
-  }
-
-  return null;
+  return (await verifyBytesWithPublic(signerPublicBytes, txHash, item.signature)) ? item : null;
 }
 
 export function txEnvelopeToBase64(envelopeXdrBytes) {
@@ -344,13 +342,13 @@ function parseOperation(reader) {
     throw new Error(`Unsafe transaction: operation type ${type} is not allowed.`);
   }
 
-  const dataName = reader.readString();
+  const dataName = reader.readString(64);
   const hasDataValue = reader.readInt32();
   if (hasDataValue !== 0 && hasDataValue !== 1) {
     throw new Error('Invalid ManageData optional value flag.');
   }
 
-  const dataValue = hasDataValue ? reader.readOpaque() : null;
+  const dataValue = hasDataValue ? reader.readOpaque(64) : null;
 
   return {
     type,
@@ -371,7 +369,7 @@ function parseDecoratedSignatures(reader) {
   const out = [];
   for (let i = 0; i < count; i += 1) {
     const hint = reader.readOpaqueFixed(4);
-    const signature = reader.readOpaque();
+    const signature = reader.readOpaque(64);
     out.push({ hint, signature });
   }
 
@@ -529,20 +527,25 @@ class XdrReader {
   readOpaqueFixed(length) {
     const data = this.readSlice(length);
     const pad = (4 - (length % 4)) % 4;
-    if (pad) this.readSlice(pad);
+    if (pad) {
+      const padding = this.readSlice(pad);
+      for (const byte of padding) {
+        if (byte !== 0) throw new Error('XDR padding bytes must be zero.');
+      }
+    }
     return data;
   }
 
-  readOpaque() {
+  readOpaque(maxLength = MAX_XDR_ENVELOPE_BYTES) {
     const length = this.readInt32();
-    if (length < 0) {
+    if (length < 0 || length > maxLength) {
       throw new Error('Invalid opaque length.');
     }
     return this.readOpaqueFixed(length);
   }
 
-  readString() {
-    return bytesToUtf8(this.readOpaque());
+  readString(maxLength) {
+    return bytesToUtf8(this.readOpaque(maxLength));
   }
 
   ensureConsumed() {
@@ -553,12 +556,16 @@ class XdrReader {
 }
 
 function assertSupportedManageDataName(name) {
-  if (name !== MANAGE_DATA_NAME.SHA256 && name !== MANAGE_DATA_NAME.SHA3_512) {
+  if (
+    name !== MANAGE_DATA_NAME.SHA256 &&
+    name !== MANAGE_DATA_NAME.SHA3_512 &&
+    name !== MANAGE_DATA_NAME.MANIFEST_SHA256
+  ) {
     throw new Error(`Unsupported ManageData name: ${name}`);
   }
 }
 
 function expectedManageDataLength(name) {
-  if (name === MANAGE_DATA_NAME.SHA256) return 32;
+  if (name === MANAGE_DATA_NAME.SHA256 || name === MANAGE_DATA_NAME.MANIFEST_SHA256) return 32;
   return 64;
 }

@@ -1,4 +1,7 @@
 export const SIGNATURE_SCHEMA_V2 = 'stellar-signature/v2';
+export const SIGNATURE_SCHEMA_V3 = 'stellar-signature/v3';
+export const SIGNATURE_APPLICATION = 'stellar-websigner';
+export const SIGNATURE_PURPOSE = 'detached-content-authentication';
 export const SEP53_PREFIX = 'Stellar Signed Message:\n';
 
 export const PUBLIC_NETWORK_PASSPHRASE = 'Public Global Stellar Network ; September 2015';
@@ -23,6 +26,7 @@ export const PROOF_TYPE = Object.freeze({
 export const PAYLOAD_TYPE = Object.freeze({
   RAW_BYTES: 'raw-bytes',
   DETACHED_DIGESTS: 'detached-digests',
+  PROTECTED_MANIFEST: 'protected-manifest',
 });
 
 export const SIGNATURE_SCHEME = Object.freeze({
@@ -33,6 +37,7 @@ export const SIGNATURE_SCHEME = Object.freeze({
 export const MANAGE_DATA_NAME = Object.freeze({
   SHA256: 'ws.sha256',
   SHA3_512: 'ws.sha3-512',
+  MANIFEST_SHA256: 'org.stellar-websigner.manifest.sha256',
 });
 
 export const HASH_SELECTION = Object.freeze({

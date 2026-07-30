@@ -1,11 +1,23 @@
 import {
   HASH_ALG,
+  MANAGE_DATA_NAME,
   PAYLOAD_TYPE,
   PROOF_TYPE,
   SIGNATURE_SCHEME,
   SIGNATURE_SCHEMA_V2,
+  SIGNATURE_SCHEMA_V3,
 } from './constants.js';
 import { bytesEqual } from './bytes.js';
+import { assertStrictEd25519PublicKey } from './ed25519-validation.js';
+import { parseHashEntries, digestForHashAlgorithm, hashAlgorithmFromManageDataName } from './message.js';
+import { knownNetworkPassphrases, networkHintFromPassphrase } from './network.js';
+import {
+  assertExactKeys,
+  protectedManifestBytes,
+  protectedManifestSha256,
+  validateProtectedManifest,
+} from './protected-manifest.js';
+import { parseSep53Signature, readInputContextBytes, verifySep53Message } from './sep53.js';
 import { decodeEd25519PublicKey, encodeEd25519PublicKey } from './strkey.js';
 import {
   assertSafeManageDataEnvelope,
@@ -13,38 +25,21 @@ import {
   findValidDecoratedSignature,
   parseTransactionEnvelope,
 } from './xdr.js';
-import {
-  digestForHashAlgorithm,
-  hashAlgorithmFromManageDataName,
-  normalizeHashAlgorithmName,
-  parseHashEntries,
-} from './message.js';
-import { knownNetworkPassphrases, networkHintFromPassphrase } from './network.js';
-import { parseSep53Signature, readInputContextBytes, verifySep53Message } from './sep53.js';
 
-const SUPPORTED_PROFILES = Object.freeze([
-  Object.freeze({
-    id: 'sep53-message',
+const V2_PROFILES = Object.freeze([
+  {
+    id: 'v2-sep53-content-only',
     proofType: PROOF_TYPE.SEP53_MESSAGE,
     payloadType: PAYLOAD_TYPE.RAW_BYTES,
     signatureScheme: SIGNATURE_SCHEME.SEP53_SHA256_ED25519,
-    topLevelKeys: Object.freeze([
-      'schema',
-      'signer',
-      'proofType',
-      'payloadType',
-      'signatureScheme',
-      'input',
-      'hashes',
-      'signatureB64',
-    ]),
-  }),
-  Object.freeze({
-    id: 'xdr-envelope',
+    keys: ['schema', 'signer', 'proofType', 'payloadType', 'signatureScheme', 'input', 'hashes', 'signatureB64'],
+  },
+  {
+    id: 'v2-xdr-content-digests-only',
     proofType: PROOF_TYPE.XDR_ENVELOPE,
     payloadType: PAYLOAD_TYPE.DETACHED_DIGESTS,
     signatureScheme: SIGNATURE_SCHEME.TX_ENVELOPE_ED25519,
-    topLevelKeys: Object.freeze([
+    keys: [
       'schema',
       'signer',
       'proofType',
@@ -56,526 +51,312 @@ const SUPPORTED_PROFILES = Object.freeze([
       'txSourceAccount',
       'signedXdr',
       'input',
-    ]),
-  }),
+    ],
+  },
 ]);
 
 export async function verifyDetachedSignature({ signatureDoc, inputContext, expectedSigner = '', strict = true }) {
   const report = createReport();
-  const emptyChecked = {
-    mode: '',
-    schema: '',
-    proofType: '',
-    payloadType: '',
-    signatureScheme: '',
-    hashes: [],
-  };
-
-  if (!signatureDoc || typeof signatureDoc !== 'object') {
-    report.fail('Malformed signature document: expected JSON object.');
-    return report.finish({ signer: '', checked: emptyChecked });
-  }
-
-  const schema = typeof signatureDoc.schema === 'string' ? signatureDoc.schema : String(signatureDoc.schema || '');
-  const isV2Schema = schema === SIGNATURE_SCHEMA_V2;
-  if (!isV2Schema) {
-    report.fail(`Unsupported schema: ${String(signatureDoc.schema || '(missing)')}`);
-  } else {
-    report.ok(`Schema accepted: ${schema}`);
-  }
-
-  const signer = String(signatureDoc.signer || '').trim();
-  let signerPublicBytes = null;
+  const checked = emptyChecked();
   try {
-    signerPublicBytes = decodeEd25519PublicKey(signer);
-    report.ok('Signer address format is valid.');
-  } catch (err) {
-    report.fail(`Invalid signer address: ${err.message}`);
-  }
-
-  const expectedSignerTrimmed = String(expectedSigner || '').trim();
-  if (expectedSignerTrimmed && signer && expectedSignerTrimmed !== signer) {
-    report.fail(`Wrong signer: expected ${expectedSignerTrimmed}, got ${signer}.`);
-  }
-
-  const proofType = String(signatureDoc.proofType || '').trim();
-  const payloadType = String(signatureDoc.payloadType || '').trim();
-  const signatureScheme = String(signatureDoc.signatureScheme || '').trim();
-  let recomputedEntries = [];
-  let checked = {
-    mode: '',
-    schema,
-    proofType,
-    payloadType,
-    signatureScheme,
-    hashes: [],
-  };
-
-  let hashEntries;
-  try {
-    hashEntries = parseHashEntries(signatureDoc);
-    report.ok(`Hash entries parsed: ${hashEntries.map((item) => item.alg).join(', ')}`);
-  } catch (err) {
-    report.fail(`Malformed hashes section: ${err.message}`);
-    return report.finish({ signer, checked });
-  }
-
-  recomputedEntries = [];
-  for (const entry of hashEntries) {
-    const digest = digestForHashAlgorithm(inputContext.digests, entry.alg);
-    const recomputed = {
-      alg: digest.alg,
-      hex: digest.hex,
-      bytes: digest.bytes,
-      manageDataName: digest.manageDataName,
-    };
-    recomputedEntries.push(recomputed);
-
-    if (entry.hex !== recomputed.hex) {
-      report.fail(`Digest mismatch for ${entry.alg}: signature=${entry.hex}, recomputed=${recomputed.hex}`);
-    } else {
-      report.ok(`Digest match for ${entry.alg}.`);
+    validateInputContext(inputContext);
+    if (!isPlainObject(signatureDoc)) throw new Error('Malformed signature document: expected JSON object.');
+    if (signatureDoc.schema === SIGNATURE_SCHEMA_V3) {
+      return await verifyV3({ report, checked, signatureDoc, inputContext, expectedSigner, strict });
     }
+    if (signatureDoc.schema === SIGNATURE_SCHEMA_V2) {
+      return await verifyV2({ report, checked, signatureDoc, inputContext, expectedSigner, strict });
+    }
+    report.fail(`Unsupported schema: ${String(signatureDoc.schema || '(missing)')}`);
+  } catch (err) {
+    report.fail(err instanceof Error ? err.message : String(err));
   }
-
-  checked = {
-    mode: '',
-    schema,
-    proofType,
-    payloadType,
-    signatureScheme,
-    hashes: recomputedEntries.map((item) => ({ alg: item.alg, hex: item.hex })),
-  };
-
-  const profile = resolveSupportedProfile({ schema, proofType, payloadType, signatureScheme });
-  if (!profile) {
-    report.fail(
-      `Unsupported signature profile: ${proofType || '(missing)'} / ${payloadType || '(missing)'} / ${signatureScheme || '(missing)'}.`
-    );
-    return report.finish({ signer, checked });
-  }
-  report.ok(`Signature profile accepted: ${profile.id}.`);
-  if (strict) {
-    warnUnknownTopLevelKeys({ report, signatureDoc, profile });
-  }
-
-  if (profile.id === 'sep53-message') {
-    await verifyV2Sep53MessageSignatureMode({
-      report,
-      signatureDoc,
-      signerPublicBytes,
-      inputContext,
-      checked,
-    });
-  } else if (profile.id === 'xdr-envelope') {
-    await verifyXdrProofMode({
-      report,
-      signatureDoc,
-      signer,
-      signerPublicBytes,
-      inputContext,
-      recomputedEntries,
-    });
-  }
-
-  return report.finish({ signer, checked });
+  return report.finish({ signer: String(signatureDoc?.signer || ''), checked });
 }
 
-async function verifyV2Sep53MessageSignatureMode({
-  report,
-  signatureDoc,
-  signerPublicBytes,
-  inputContext,
-  checked,
-}) {
+async function verifyV3({ report, checked, signatureDoc, inputContext, expectedSigner, strict }) {
+  const signer = validateSigner({ report, signatureDoc, expectedSigner });
+  checked.schema = SIGNATURE_SCHEMA_V3;
+  const proofType = signatureDoc.protected?.proofType;
+  if (proofType !== PROOF_TYPE.SEP53_MESSAGE && proofType !== PROOF_TYPE.XDR_ENVELOPE) {
+    throw new Error('Protected proofType is unsupported.');
+  }
+  const expectedTopKeys =
+    proofType === PROOF_TYPE.SEP53_MESSAGE
+      ? ['schema', 'signer', 'protected', 'signatureB64']
+      : ['schema', 'signer', 'protected', 'signedXdr'];
+  if (strict) assertExactKeys(signatureDoc, expectedTopKeys, 'signature document');
+
+  validateProtectedManifest({
+    manifest: signatureDoc.protected,
+    inputContext,
+    expectedProofType: proofType,
+    expectedSigner: signer.address,
+  });
+  checked.mode = proofType === PROOF_TYPE.SEP53_MESSAGE ? 'protected-manifest-sep53' : 'protected-manifest-xdr';
+  checked.proofType = proofType;
+  checked.payloadType = signatureDoc.protected.payloadType;
+  checked.signatureScheme = signatureDoc.protected.signatureScheme;
+  checked.hashes = signatureDoc.protected.hashes.map((entry) => ({ ...entry }));
+  report.ok('Protected manifest schema, metadata, input identity, and exact hash set validated.');
+
+  if (proofType === PROOF_TYPE.SEP53_MESSAGE) {
+    await verifyV3Sep53({ report, signatureDoc, signer, checked });
+  } else {
+    await verifyV3Xdr({ report, signatureDoc, signer });
+  }
+  return report.finish({ signer: signer.address, checked });
+}
+
+async function verifyV3Sep53({ report, signatureDoc, signer, checked }) {
   let signatureBytes;
   try {
     signatureBytes = parseSep53Signature(signatureDoc.signatureB64);
-    report.ok('signatureB64 parsed successfully.');
   } catch (err) {
     report.fail(`Malformed signature: ${err.message}`);
     return;
   }
-
-  validateInputDescriptor({
-    report,
-    declaredInput: signatureDoc.input && typeof signatureDoc.input === 'object' ? signatureDoc.input : null,
-    inputContext,
-    requireDescriptor: true,
+  const manifestBytes = protectedManifestBytes(signatureDoc.protected);
+  checked.messageBytesLength = manifestBytes.length;
+  const valid = await verifySep53Message({
+    publicKeyBytes: signer.publicBytes,
+    messageBytes: manifestBytes,
+    signatureBytes,
   });
-
-  let messageBytes;
-  try {
-    messageBytes = readInputContextBytes(inputContext);
-    report.ok(`Input bytes loaded for SEP-53 verification (${messageBytes.length} bytes).`);
-    checked.messageBytesLength = messageBytes.length;
-  } catch (err) {
-    report.fail(err.message);
-    return;
-  }
-
-  if (!signerPublicBytes) return;
-
-  const ok = await verifySep53Message({ publicKeyBytes: signerPublicBytes, messageBytes, signatureBytes });
-  if (!ok) {
-    report.fail('SEP-53 content signature verification failed.');
-  } else {
-    report.ok('SEP-53 content signature verification passed.');
-  }
+  if (valid) report.ok('SEP-53 signature over the canonical protected manifest is valid.');
+  else report.fail('SEP-53 protected-manifest signature verification failed.');
 }
 
-async function verifyXdrProofMode({
-  report,
-  signatureDoc,
-  signer,
-  signerPublicBytes,
-  inputContext,
-  recomputedEntries,
-}) {
-  const signedXdr = String(signatureDoc.signedXdr || '').trim();
-  if (!signedXdr) {
-    report.fail('Malformed signature: signedXdr field is missing.');
-    return;
-  }
-
+async function verifyV3Xdr({ report, signatureDoc, signer }) {
   let parsed;
   try {
-    parsed = parseTransactionEnvelope(signedXdr);
-    report.ok('signedXdr parsed successfully.');
+    parsed = parseTransactionEnvelope(signatureDoc.signedXdr);
   } catch (err) {
     report.fail(`Malformed signedXdr: ${err.message}`);
     return;
   }
-
-  let declaredManageDataEntries;
+  const manifestDigest = await protectedManifestSha256(signatureDoc.protected);
+  let safe;
   try {
-    declaredManageDataEntries = parseDeclaredManageDataEntries(signatureDoc.manageData);
-  } catch (err) {
-    report.fail(`Malformed manageData section: ${err.message}`);
-    return;
-  }
-  if (declaredManageDataEntries.length === 0) {
-    report.fail('manageData.entries must contain at least one entry.');
-    return;
-  }
-  let safeOp;
-  try {
-    safeOp = assertSafeManageDataEnvelope(parsed, {
-      expectedEntries: declaredManageDataEntries.length
-        ? declaredManageDataEntries.map((item) => ({ dataName: item.name }))
-        : undefined,
+    safe = assertSafeManageDataEnvelope(parsed, {
+      expectedEntries: [{ dataName: MANAGE_DATA_NAME.MANIFEST_SHA256, dataValue: manifestDigest }],
     });
-    report.ok('Transaction structure is safe for signing/verification policy.');
   } catch (err) {
     report.fail(err.message);
     return;
   }
-
-  const sourceAddress = encodeEd25519PublicKey(safeOp.sourceAccount);
-  if (!signer) {
-    report.fail('Signer field is missing in signature document.');
+  const sourceAddress = encodeEd25519PublicKey(safe.sourceAccount);
+  if (sourceAddress !== signer.address) {
+    report.fail(`signedXdr sourceAccount mismatch: signer=${signer.address}, sourceAccount=${sourceAddress}.`);
     return;
   }
-
-  const declaredTxSource = String(signatureDoc.txSourceAccount || '').trim();
-  if (declaredTxSource && declaredTxSource !== sourceAddress) {
-    report.fail(
-      `txSourceAccount mismatch: signature document declares ${declaredTxSource}, signedXdr has ${sourceAddress}.`
-    );
-    return;
-  }
-
-  if (sourceAddress !== signer) {
-    report.fail(`signedXdr sourceAccount mismatch: signer=${signer}, sourceAccount=${sourceAddress}.`);
-    return;
-  }
-  report.ok('signedXdr sourceAccount matches signer field.');
-
-  if (safeOp.manageDataEntries.length === 0) {
-    report.fail('signedXdr has no ManageData entries.');
-    return;
-  }
-
-  if (safeOp.manageDataEntries.length !== recomputedEntries.length) {
-    report.fail('signedXdr ManageData count must exactly match hashes[] count.');
-    return;
-  }
-
-  const seenManageDataNames = new Set();
-  const seenAlgorithms = new Set();
-  for (const txEntry of safeOp.manageDataEntries) {
-    if (seenManageDataNames.has(txEntry.dataName)) {
-      report.fail(`Duplicate ManageData name in signedXdr: ${txEntry.dataName}.`);
-      return;
-    }
-    seenManageDataNames.add(txEntry.dataName);
-
-    const declared = declaredManageDataEntries.find((item) => item.name === txEntry.dataName);
-    const boundAlg = declared?.alg || hashAlgorithmFromManageDataName(txEntry.dataName);
-
-    if (!boundAlg) {
-      report.fail(`Cannot determine hash algorithm bound to ManageData ${txEntry.dataName}.`);
-      return;
-    }
-
-    if (seenAlgorithms.has(boundAlg)) {
-      report.fail(`Duplicate ManageData algorithm binding: ${boundAlg}.`);
-      return;
-    }
-    seenAlgorithms.add(boundAlg);
-
-    const expectedValueLength = boundAlg === HASH_ALG.SHA3_512 ? 64 : 32;
-    if (txEntry.dataValue.length !== expectedValueLength) {
-      report.fail(
-        `ManageData value length mismatch for ${boundAlg}: expected ${expectedValueLength} bytes, got ${txEntry.dataValue.length}.`
-      );
-      return;
-    }
-
-    const boundDigest = digestForHashAlgorithm(inputContext.digests, boundAlg);
-    if (!bytesEqual(txEntry.dataValue, boundDigest.bytes)) {
-      report.fail(`ManageData digest mismatch for ${boundAlg}.`);
-      return;
-    }
-
-    if (declared?.digestHex && declared.digestHex !== boundDigest.hex) {
-      report.fail(`manageData.digestHex mismatch for ${txEntry.dataName}.`);
-      return;
-    }
-
-    const boundEntry = recomputedEntries.find((entry) => entry.alg === boundAlg);
-    if (!boundEntry) {
-      report.fail(`hashes[] does not include bound ManageData algorithm ${boundAlg}.`);
-      return;
-    }
-
-    report.ok(`ManageData digest matches recomputed ${boundAlg} digest.`);
-  }
-
-  for (const hashEntry of recomputedEntries) {
-    if (!seenAlgorithms.has(hashEntry.alg)) {
-      report.fail(`signedXdr is missing ManageData entry for ${hashEntry.alg}.`);
-      return;
-    }
-  }
-
-  if (!signerPublicBytes) return;
-
-  const passphrase = String(signatureDoc.network?.passphrase || '').trim();
-  if (!passphrase) {
-    report.fail('network.passphrase is missing.');
-    return;
-  }
-  const declaredHint = String(signatureDoc.network?.hint || '').trim();
-  const expectedHint = networkHintFromPassphrase(passphrase);
-  if (declaredHint && declaredHint !== expectedHint) {
-    report.warn(`network.hint mismatch: expected ${expectedHint}, got ${declaredHint}.`);
-  } else {
-    report.ok(`Network hint accepted: ${declaredHint || expectedHint}.`);
-  }
-
+  const passphrase = signatureDoc.protected.network.passphrase;
   const txHash = await computeTransactionHash(parsed.txXdr, passphrase);
-  const match = await findValidDecoratedSignature(parsed.signatures, signerPublicBytes, txHash);
-  if (match) {
-    report.ok('Decorated signature is valid for transaction hash and signer.');
+  let match;
+  try {
+    match = await findValidDecoratedSignature(parsed.signatures, signer.publicBytes, txHash);
+  } catch (err) {
+    report.fail(`Invalid signedXdr signature set: ${err.message}`);
     return;
   }
-
+  if (match) {
+    report.ok('XDR signature and protected-manifest digest binding are valid.');
+    return;
+  }
   for (const alternative of knownNetworkPassphrases()) {
     if (alternative === passphrase) continue;
-    const altHash = await computeTransactionHash(parsed.txXdr, alternative);
-    const altMatch = await findValidDecoratedSignature(parsed.signatures, signerPublicBytes, altHash);
-    if (altMatch) {
+    const alternativeHash = await computeTransactionHash(parsed.txXdr, alternative);
+    if (await findValidDecoratedSignature(parsed.signatures, signer.publicBytes, alternativeHash)) {
       report.fail('Wrong network passphrase: signature is valid under a different known network passphrase.');
       return;
     }
   }
+  report.fail('No valid signer signature found in signedXdr.');
+}
 
-  report.fail('No valid signer signature found in signedXdr (malformed or wrong signature).');
+async function verifyV2({ report, checked, signatureDoc, inputContext, expectedSigner, strict }) {
+  checked.schema = SIGNATURE_SCHEMA_V2;
+  const signer = validateSigner({ report, signatureDoc, expectedSigner });
+  const profile = V2_PROFILES.find(
+    (item) =>
+      signatureDoc.proofType === item.proofType &&
+      signatureDoc.payloadType === item.payloadType &&
+      signatureDoc.signatureScheme === item.signatureScheme
+  );
+  if (!profile) throw new Error('Unsupported v2 signature profile.');
+  if (strict) assertExactKeys(signatureDoc, profile.keys, 'legacy signature document');
+  checked.mode = profile.id;
+  checked.proofType = signatureDoc.proofType;
+  checked.payloadType = signatureDoc.payloadType;
+  checked.signatureScheme = signatureDoc.signatureScheme;
+  report.warn('Legacy v2 compatibility: only content bytes/digests are authenticated; surrounding metadata is not signed.');
+
+  if (strict) {
+    if (!Array.isArray(signatureDoc.hashes)) throw new Error('Legacy hashes must be an array.');
+    signatureDoc.hashes.forEach((entry, index) => {
+      assertExactKeys(entry, ['alg', 'hex'], `legacy hashes[${index}]`);
+    });
+  }
+  const entries = parseHashEntries(signatureDoc);
+  assertExactHashSet(entries);
+  checked.hashes = entries.map((entry) => ({ ...entry }));
+  for (const entry of entries) {
+    const recomputed = digestForHashAlgorithm(inputContext.digests, entry.alg);
+    if (entry.hex !== recomputed.hex) report.fail(`Digest mismatch for ${entry.alg}.`);
+    else report.ok(`Digest match for ${entry.alg}.`);
+  }
+  validateLegacyInput(signatureDoc.input, inputContext);
+
+  if (profile.id === 'v2-sep53-content-only') {
+    const signatureBytes = parseSep53Signature(signatureDoc.signatureB64);
+    const messageBytes = readInputContextBytes(inputContext);
+    checked.messageBytesLength = messageBytes.length;
+    const valid = await verifySep53Message({
+      publicKeyBytes: signer.publicBytes,
+      messageBytes,
+      signatureBytes,
+    });
+    if (valid) report.ok('Legacy SEP-53 content signature is valid.');
+    else report.fail('SEP-53 content signature verification failed.');
+  } else {
+    await verifyV2Xdr({ report, signatureDoc, inputContext, signer });
+  }
+  return report.finish({ signer: signer.address, checked });
+}
+
+async function verifyV2Xdr({ report, signatureDoc, inputContext, signer }) {
+  assertExactKeys(signatureDoc.network, ['passphrase', 'hint'], 'legacy network');
+  assertExactKeys(signatureDoc.manageData, ['entries'], 'legacy manageData');
+  if (signatureDoc.txSourceAccount !== signer.address) throw new Error('Legacy txSourceAccount is required and must match signer.');
+  const declared = signatureDoc.manageData.entries;
+  if (!Array.isArray(declared) || declared.length !== 2) throw new Error('Legacy manageData.entries must contain exactly two entries.');
+  const expectedEntries = declared.map((entry, index) => {
+    assertExactKeys(entry, ['name', 'alg', 'digestHex'], `legacy manageData.entries[${index}]`);
+    const alg = hashAlgorithmFromManageDataName(entry.name);
+    if (!alg || alg !== entry.alg) throw new Error('Legacy ManageData name/algorithm mismatch.');
+    const digest = digestForHashAlgorithm(inputContext.digests, alg);
+    if (entry.digestHex !== digest.hex) throw new Error('Legacy ManageData declared digest mismatch.');
+    return { dataName: entry.name, dataValue: digest.bytes };
+  });
+  const parsed = parseTransactionEnvelope(signatureDoc.signedXdr);
+  const safe = assertSafeManageDataEnvelope(parsed, { expectedEntries });
+  if (encodeEd25519PublicKey(safe.sourceAccount) !== signer.address) throw new Error('Legacy XDR source does not match signer.');
+  const passphrase = String(signatureDoc.network.passphrase || '');
+  if (!passphrase || signatureDoc.network.hint !== networkHintFromPassphrase(passphrase)) {
+    throw new Error('Legacy network fields are invalid.');
+  }
+  const txHash = await computeTransactionHash(parsed.txXdr, passphrase);
+  const match = await findValidDecoratedSignature(parsed.signatures, signer.publicBytes, txHash);
+  if (!match) report.fail('No valid signer signature found in legacy signedXdr.');
+  else report.ok('Legacy XDR signature and digest operations are valid.');
+}
+
+function validateSigner({ report, signatureDoc, expectedSigner }) {
+  const address = typeof signatureDoc.signer === 'string' ? signatureDoc.signer : '';
+  if (!address || address !== address.trim()) throw new Error('Signer field is missing or non-canonical.');
+  const publicBytes = decodeEd25519PublicKey(address);
+  assertStrictEd25519PublicKey(publicBytes);
+  const expected = String(expectedSigner || '').trim();
+  if (expected && expected !== address) report.fail(`Wrong signer: expected ${expected}, got ${address}.`);
+  else report.ok('Signer address and Ed25519 public point are valid.');
+  return { address, publicBytes };
+}
+
+function validateLegacyInput(input, inputContext) {
+  if (!isPlainObject(input)) throw new Error('Legacy input descriptor is required.');
+  if (input.type === 'file') {
+    assertExactKeys(input, ['type', 'name', 'size'], 'legacy input');
+    if (inputContext.type !== 'file') throw new Error('Legacy input type mismatch.');
+    if (input.name !== inputContext.fileName) throw new Error('Legacy input filename mismatch.');
+  } else if (input.type === 'text') {
+    assertExactKeys(input, ['type', 'size'], 'legacy input');
+    if (inputContext.type !== 'text') throw new Error('Legacy input type mismatch.');
+  } else {
+    throw new Error('Legacy input type is invalid.');
+  }
+  if (!Number.isSafeInteger(input.size) || input.size !== inputContext.fileSize) {
+    throw new Error('Legacy input size mismatch.');
+  }
+}
+
+function assertExactHashSet(entries) {
+  if (
+    entries.length !== 2 ||
+    entries[0].alg !== HASH_ALG.SHA256 ||
+    entries[1].alg !== HASH_ALG.SHA3_512
+  ) {
+    throw new Error('Signature hashes must contain exactly SHA-256 and SHA3-512 in canonical order.');
+  }
 }
 
 function createReport() {
   const details = [];
   const errors = [];
   const warnings = [];
+  return {
+    ok(message) {
+      details.push(`OK: ${message}`);
+    },
+    fail(message) {
+      details.push(`FAIL: ${message}`);
+      errors.push(message);
+    },
+    warn(message) {
+      details.push(`WARN: ${message}`);
+      warnings.push(message);
+    },
+    finish({ signer, checked }) {
+      return {
+        valid: errors.length === 0,
+        signer,
+        checked,
+        details,
+        errors,
+        warnings,
+        summary: errors.length === 0 ? 'VALID' : 'INVALID',
+      };
+    },
+  };
+}
 
-  function ok(message) {
-    details.push(`OK: ${message}`);
-  }
-
-  function fail(message) {
-    details.push(`FAIL: ${message}`);
-    errors.push(message);
-  }
-
-  function warn(message) {
-    details.push(`WARN: ${message}`);
-    warnings.push(message);
-  }
-
-  function finish({ signer, checked }) {
-    return {
-      valid: errors.length === 0,
-      signer,
-      checked,
-      details,
-      errors,
-      warnings,
-      summary: errors.length === 0 ? 'VALID' : 'INVALID',
-    };
-  }
-
-  return { ok, fail, warn, finish };
+function emptyChecked() {
+  return { mode: '', schema: '', proofType: '', payloadType: '', signatureScheme: '', hashes: [] };
 }
 
 export function validateInputContext(inputContext) {
-  if (!inputContext || typeof inputContext !== 'object') {
-    throw new Error('Input context is required.');
-  }
-  if (inputContext.type !== 'file' && inputContext.type !== 'text') {
-    throw new Error('Input context type must be file or text.');
-  }
-  if (!inputContext.digests?.sha256 || !inputContext.digests?.sha3_512) {
-    throw new Error('Input context digests are missing.');
-  }
-  if (inputContext.type === 'file' && (!Number.isInteger(inputContext.fileSize) || inputContext.fileSize < 0)) {
-    throw new Error('Input context fileSize is invalid.');
-  }
+  if (!isPlainObject(inputContext)) throw new Error('Input context is required.');
+  if (inputContext.type !== 'file' && inputContext.type !== 'text') throw new Error('Input context type must be file or text.');
+  if (!inputContext.digests?.sha256 || !inputContext.digests?.sha3_512) throw new Error('Input context digests are missing.');
+  if (!Number.isSafeInteger(inputContext.fileSize) || inputContext.fileSize < 0) throw new Error('Input context size is invalid.');
 }
 
 export function diagnosticsForDisplay(report) {
-  const lines = [];
-  lines.push(`Result: ${report.valid ? 'VALID' : 'INVALID'}`);
-  lines.push(`Signer: ${report.signer || '-'}`);
-  lines.push(`Schema: ${report.checked?.schema || '-'}`);
-  lines.push(`Proof Type: ${report.checked?.proofType || '-'}`);
-  lines.push(`Payload Type: ${report.checked?.payloadType || '-'}`);
-  lines.push(`Signature Scheme: ${report.checked?.signatureScheme || '-'}`);
-  lines.push(`Mode: ${report.checked?.mode || '-'}`);
-  if (Array.isArray(report.checked?.hashes) && report.checked.hashes.length > 0) {
+  const lines = [
+    `Result: ${report.valid ? 'VALID' : 'INVALID'}`,
+    `Signer: ${report.signer || '-'}`,
+    `Schema: ${report.checked?.schema || '-'}`,
+    `Proof Type: ${report.checked?.proofType || '-'}`,
+    `Payload Type: ${report.checked?.payloadType || '-'}`,
+    `Signature Scheme: ${report.checked?.signatureScheme || '-'}`,
+    `Mode: ${report.checked?.mode || '-'}`,
+  ];
+  if (report.checked?.hashes?.length) {
     lines.push('Hashes:');
-    for (const item of report.checked.hashes) {
-      lines.push(`  ${item.alg}: ${item.hex}`);
-    }
-  } else {
-    lines.push('Hashes: -');
-  }
-  if (Number.isInteger(report.checked?.messageBytesLength)) {
-    lines.push(`Message Bytes: ${report.checked.messageBytesLength}`);
-  }
-  lines.push('');
-  lines.push(...report.details);
+    for (const item of report.checked.hashes) lines.push(`  ${item.alg}: ${item.hex}`);
+  } else lines.push('Hashes: -');
+  if (Number.isInteger(report.checked?.messageBytesLength)) lines.push(`Signed Manifest Bytes: ${report.checked.messageBytesLength}`);
+  lines.push('', ...report.details);
   return lines.join('\n');
 }
 
 export function signatureDocRequiresInputBytes(signatureDoc) {
-  const profile = resolveSupportedProfile({
-    schema: String(signatureDoc?.schema || '').trim(),
-    proofType: String(signatureDoc?.proofType || '').trim(),
-    payloadType: String(signatureDoc?.payloadType || '').trim(),
-    signatureScheme: String(signatureDoc?.signatureScheme || '').trim(),
-  });
-  return profile?.id === 'sep53-message';
+  return signatureDoc?.schema === SIGNATURE_SCHEMA_V2 && signatureDoc?.proofType === PROOF_TYPE.SEP53_MESSAGE;
 }
 
 export function sameDigestBytes(a, b) {
   return bytesEqual(a, b);
 }
 
-function parseDeclaredManageDataEntries(manageDataSection) {
-  const entries = manageDataSection?.entries;
-  if (!Array.isArray(entries)) {
-    throw new Error('manageData.entries must be an array.');
-  }
-  if (entries.length === 0) {
-    throw new Error('manageData.entries must not be empty.');
-  }
-
-  const seen = new Set();
-  return entries.map((item) => {
-    const name = String(item?.name || '').trim();
-    const alg = normalizeHashAlgorithmName(item?.alg);
-    const digestHex = String(item?.digestHex || '').toLowerCase();
-
-    if (!name) {
-      throw new Error('manageData.entries contains empty name.');
-    }
-    if (seen.has(name)) {
-      throw new Error(`manageData.entries contains duplicate name: ${name}`);
-    }
-    seen.add(name);
-    if (!/^[0-9a-f]+$/.test(digestHex)) {
-      throw new Error(`manageData.entries digestHex is invalid for ${name}.`);
-    }
-
-    const impliedAlg = hashAlgorithmFromManageDataName(name);
-    if (!impliedAlg) {
-      throw new Error(`Unsupported ManageData name: ${name}.`);
-    }
-    if (impliedAlg !== alg) {
-      throw new Error(`ManageData name/alg mismatch for ${name}.`);
-    }
-
-    const expectedHexLength = expectedDigestHexLength(alg);
-    if (digestHex.length !== expectedHexLength) {
-      throw new Error(`manageData.entries digestHex length mismatch for ${name}.`);
-    }
-
-    return {
-      name,
-      alg,
-      digestHex,
-    };
-  });
-}
-
-function validateInputDescriptor({ report, declaredInput, inputContext, requireDescriptor = false }) {
-  if (declaredInput?.type === 'file' || declaredInput?.type === 'text') {
-    report.ok(`Input descriptor accepted: ${declaredInput.type}.`);
-    if (declaredInput.type !== inputContext.type) {
-      report.fail(`Input type mismatch: signature expects ${declaredInput.type}, received ${inputContext.type}.`);
-    }
-    if (Number.isInteger(declaredInput.size) && declaredInput.size !== inputContext.fileSize) {
-      report.fail(`Input size mismatch: signature expects ${declaredInput.size}, received ${inputContext.fileSize}.`);
-    }
-    return;
-  }
-
-  if (declaredInput) {
-    report.warn('Signature input descriptor is present but has unsupported type metadata.');
-    return;
-  }
-
-  if (requireDescriptor) {
-    report.fail('Signature input descriptor is missing.');
-    return;
-  }
-
-  report.warn('Signature input descriptor is missing.');
-}
-
-function warnUnknownTopLevelKeys({ report, signatureDoc, profile }) {
-  const allowed = new Set(profile.topLevelKeys);
-  const unknown = Object.keys(signatureDoc).filter((key) => !allowed.has(key));
-  for (const key of unknown) {
-    report.warn(`Unknown top-level key ignored: ${key}.`);
-  }
-}
-
-function expectedDigestHexLength(alg) {
-  const normalized = normalizeHashAlgorithmName(alg);
-  if (normalized === HASH_ALG.SHA256) return 64;
-  return 128;
-}
-
-function resolveSupportedProfile({ schema, proofType, payloadType, signatureScheme }) {
-  if (schema !== SIGNATURE_SCHEMA_V2) return null;
-  return (
-    SUPPORTED_PROFILES.find(
-      (item) =>
-        item.proofType === proofType &&
-        item.payloadType === payloadType &&
-        item.signatureScheme === signatureScheme
-    ) || null
-  );
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }

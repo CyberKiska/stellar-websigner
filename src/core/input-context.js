@@ -1,9 +1,11 @@
 import { bytesToBase64, bytesToHexLower, utf8ToBytes, wipeBytes } from './bytes.js';
 import { computeDigests, createSha256Stream, createSha3_512Stream } from './hash.js';
 
-const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024;
-const MAX_BUFFERED_FILE_SIZE_BYTES = 256 * 1024 * 1024;
-const MAX_STREAMED_FILE_SIZE_BYTES = 1024 * 1024 * 1024;
+// Keep fallback SHA3-512 work slices short enough to yield regularly on the UI
+// thread. Web Crypto has no portable streaming digest API.
+const DEFAULT_CHUNK_SIZE = 512 * 1024;
+const MAX_BUFFERED_FILE_SIZE_BYTES = 32 * 1024 * 1024;
+const MAX_STREAMED_FILE_SIZE_BYTES = 64 * 1024 * 1024;
 
 export async function createFileInputContext(file, options = {}) {
   if (!file) throw new Error('File is required.');
@@ -47,6 +49,7 @@ export async function createFileInputContext(file, options = {}) {
     fileName: String(file.name || ''),
     fileSize: Number(file.size || 0),
     fileLastModified: Number(file.lastModified || 0),
+    mediaType: String(file.type || '').trim().toLowerCase() || 'application/octet-stream',
     bytes,
     digests,
   };
@@ -66,6 +69,7 @@ export async function createTextInputContext(text, options = {}) {
       fileName: '',
       fileSize,
       fileLastModified: 0,
+      mediaType: 'text/plain;charset=utf-8',
       bytes: keepBytes ? bytes.slice() : new Uint8Array(0),
       digests,
     };
@@ -106,6 +110,7 @@ async function readFileChunked(file, { chunkSize, keepBytes, onProgress, signal 
         total,
         message: `Reading and hashing file: ${Math.round((offset / total) * 100)}%`,
       });
+      await yieldToEventLoop();
     }
 
     onProgress?.({
@@ -141,6 +146,13 @@ async function readFileChunked(file, { chunkSize, keepBytes, onProgress, signal 
     if (sha3512Bytes) wipeBytes(sha3512Bytes);
     throw err;
   }
+}
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
+    else setTimeout(resolve, 0);
+  });
 }
 
 function throwIfAborted(signal) {
