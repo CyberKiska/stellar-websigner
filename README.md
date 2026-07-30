@@ -9,8 +9,8 @@ Static client-only web app for Stellar (Ed25519) content signatures and XDR proo
 
 ## Features
 
-1. Key management: generate/import/export Ed25519 (Stellar) keypairs.
-2. Sign locally: select file/text, create SEP-53 content signature, download `.sig`.
+1. Key management: generate/import Ed25519 (Stellar) keys and export public information only.
+2. Sign locally: select file/text, sign a protected manifest through SEP-53, download `.sig`.
 3. Sign with external wallet: generate unsigned XDR proof, sign externally, paste signed XDR, download `.sig`.
 4. Verify: select original input + `.sig`, get `VALID`/`INVALID` with technical details.
 
@@ -27,7 +27,9 @@ We aim to implement
 * Message signing with Stellar according to [SEP-53](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0053.md), especially its Signing Procedure
 * Detached XDR proof verification according to Stellar transaction hashing/signature rules
 
-SEP-53 signs `SHA-256("Stellar Signed Message:\n" || messageBytes)` with Ed25519. This is not Ed25519ph. The SHA-256 step is part of the Stellar SEP-53 message construction, not the RFC 8032 prehash signing variant.
+SEP-53 signs `SHA-256("Stellar Signed Message:\n" || messageBytes)` with Ed25519. This is not Ed25519ph. In schema v3, `messageBytes` is the RFC 8785 serialization of the protected manifest; the manifest contains the detached content digests.
+
+Verification performs provider-independent Ed25519 checks before Web Crypto: canonical point encodings, prime-order subgroup membership for the public key and `R`, rejection of the identity point, and canonical `S < L`. A startup RFC 8032 known-answer test exercises the actual Web Crypto provider.
 
 ### Security model
 
@@ -35,10 +37,15 @@ SEP-53 signs `SHA-256("Stellar Signed Message:\n" || messageBytes)` with Ed25519
 - No runtime network calls.
 - No CDN.
 - No telemetry.
-- No persistent secret storage (`S...` is memory-only).
-- Session seed wipe is attempted on clear/unload.
+- No persistent secret storage. Imported seed bytes are decoded into a single non-extractable signing `CryptoKey` and temporary byte buffers are cleared in `finally` blocks.
+- Plaintext secret download and secret clipboard export are disabled.
+- Secret form controls and key state are cleared on session end, unload/pagehide, and BFCache restoration.
 
-This app protects against accidental network disclosure, malformed signature documents, unsafe XDR proof envelopes, and common deployment mistakes when the required headers are installed. It does not protect a secret seed from a compromised browser, malicious extension, injected script already running in the tab, or an operating system compromise.
+Cleanup is best effort, not guaranteed zeroization: JavaScript strings, browser form history, discarded `CryptoKey` material, the OS clipboard, and browser memory are outside the application's complete control.
+
+This app protects against accidental network disclosure, malformed signature documents, unsafe XDR proof envelopes, and common deployment mistakes when the required headers are installed. It does not protect a secret seed from a compromised browser, malicious extension, malicious same-origin release, compromised deployment pipeline, or operating-system compromise. Online JavaScript origin integrity is private-key integrity. Prefer the external-wallet flow; use local-seed signing only from an independently verified offline artifact on a dedicated device/origin.
+
+Key generation uses `subtle.generateKey('Ed25519')` and therefore relies on the browser and operating system random-bit generator. Browser JavaScript cannot inspect raw noise samples or establish SP 800-90B/90C, SP 800-133, FIPS 186-5, or FIPS 140 validation status. The startup check is a capability/KAT check, not entropy certification.
 
 ### Non-goals
 
@@ -50,12 +57,16 @@ This app protects against accidental network disclosure, malformed signature doc
 
 ### Signature format choice
 
-Detached signature format is JSON (`schema = stellar-signature/v2`) for deterministic parsing and auditability.
+New signatures use JSON schema `stellar-signature/v3`. Schema v2 remains verification-only compatibility and is reported with a warning because it authenticates content bytes/digests, not its surrounding metadata.
 
-- human-readable and diff-friendly;
-- explicit `hashes[]` block;
-- explicit proof profile metadata for reproducible verification;
-- defensive verification with field-by-field diagnostics.
+- `protected` binds application, format version, purpose, signer, proof profile, exact input role/name/size/media policy, and exactly SHA-256 plus SHA3-512;
+- protected bytes use RFC 8785 canonical JSON and reject non-I-JSON strings/numbers;
+- JSON parsing rejects duplicate members, excessive size/depth, unknown fields, and missing fields;
+- binary fields require canonical padded RFC 4648 Base64.
+
+Text mode signs UTF-8 of the textarea DOM value, with no Unicode normalization and with the browser's textarea newline behavior; unpaired UTF-16 surrogates are rejected. Verifiers must supply the same DOM text value.
+
+For local signing, the protected manifest itself is the SEP-53 message. For external signing, SHA-256 of that manifest is stored in the namespaced `org.stellar-websigner.manifest.sha256` `ManageData` entry. These are detached immutable-content proofs; they have no freshness, expiry, relying-party challenge, or anti-replay semantics and must not be treated as fresh authorization.
 
 ### External wallet XDR proof boundaries
 
@@ -66,9 +77,12 @@ Supported assumptions:
 - every operation type must be `ManageData`. This avoids unsafe XDR behavior (payments, account merge, setOptions, etc.);
 - operation-level source account is rejected;
 - preconditions/memo extensions outside `NONE` are rejected;
-- every signed digest must match corresponding `ManageData` value;
-- signer signature must be cryptographically valid for tx hash and selected network passphrase.
-- `txSourceAccount` must exactly match `signer`.
+- the single `ManageData` value must equal the protected-manifest SHA-256 digest;
+- the wallet-returned transaction bytes must exactly equal the generated unsigned draft (only the envelope signature may be added);
+- exactly one canonical 64-byte Ed25519 decorated signature is allowed and its hint must match the signer;
+- XDR bounds and zero padding required by the Stellar schema and RFC 4506 are enforced;
+- signer signature must be cryptographically valid for the transaction hash and protected network passphrase;
+- transaction source must exactly match the protected signer.
 
 ------------
 
@@ -101,18 +115,18 @@ You can force simple copy mode (no bundler dependency):
 BUILD_MODE=copy npm run build
 ```
 
-### Deploy to GitHub Pages
+### GitHub Pages preview (external wallet only)
 
-This app is already a single-page static app, so it can be hosted directly on Pages.
+GitHub Pages is not an acceptable production secret-key origin: it cannot supply the required response headers and project sites share a `<user>.github.io` origin. The workflow is manual-only and builds with `LOCAL_SECRET_POLICY=disabled`; the application also independently disables seed generation/import on `*.github.io` and insecure origins. Pages is an external-wallet/verification preview only, including on custom Pages domains.
 
 1. Push repository to GitHub.
 2. In repository settings open `Pages`, set `Build and deployment` source to `GitHub Actions`.
 3. Keep workflow file `.github/workflows/pages.yml` in `main`.
-4. Push to `main` (or run workflow manually via `Actions` tab).
+4. Run the workflow manually from the `Actions` tab.
 
 The workflow builds `dist/` and deploys it as the Pages artifact.
 
-GitHub Pages does not support custom HTTP response headers. For production use, place Pages behind a host or edge proxy that can set the headers below, or deploy `dist/` to a host that honors `_headers`.
+For production, use a dedicated origin containing no unrelated applications and a host or edge proxy that sets the headers below. Do not accept a production seed until deployed headers and iframe denial have been tested. A meta CSP cannot enforce `frame-ancestors`.
 
 Required security headers:
 
@@ -135,6 +149,8 @@ curl -I https://example.invalid/
 
 Confirm the response includes the headers above and that the page cannot be embedded in an iframe.
 
+Builds display the package version and commit identifier, use content-addressed JavaScript filenames, and emit `artifact-manifest.sha256`. That manifest detects accidental artifact drift but is not an authenticity proof when served from the same origin. Production releases should additionally use signed tags and an out-of-band signed attestation/checksum.
+
 ### Self-test
 
 ```bash
@@ -148,6 +164,10 @@ Covers:
 - XDR proof signedXDR verification;
 - wrong network passphrase detection;
 - strict signature profile and ManageData coverage checks.
+- RFC 8785/duplicate-key/Base64/XDR canonicality rejection;
+- exact unsigned-XDR round-trip binding and stale-file-context rejection;
+- malformed/extra XDR signature rejection;
+- strict Ed25519 identity/small-order/canonicality policy.
 
 ------------
 
