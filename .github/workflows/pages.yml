@@ -1,8 +1,6 @@
-name: Deploy to GitHub Pages
+name: Deploy external-wallet-only preview to GitHub Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -30,16 +28,14 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Self-test
-        run: npm run selftest
-
-      - name: Build
+      - name: Full security and build gate
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
-        run: npm run build
+          LOCAL_SECRET_POLICY: disabled
+        run: npm run check
 
-      - name: Write security headers artifact
-        run: node scripts/security-headers.mjs dist
+      - name: Remove unsupported response-header marker
+        run: rm -f dist/_headers
 
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

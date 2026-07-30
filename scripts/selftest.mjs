@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { runSelfTest } from '../src/core/selftest.js';
 import { HTTP_CSP, META_CSP, SECURITY_HEADERS, securityHeadersText } from './security-headers.mjs';
+import { resolveSafeFilePath } from './dev.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +28,7 @@ async function main() {
 async function runScriptSelfTests() {
   const tests = [
     ['security headers and meta CSP', assertSecurityHeaders],
+    ['development server path containment', assertDevServerPathContainment],
   ];
   const results = [];
   for (const [name, fn] of tests) {
@@ -38,6 +40,19 @@ async function runScriptSelfTests() {
     }
   }
   return results;
+}
+
+async function assertDevServerPathContainment() {
+  const dist = path.join(root, 'dist');
+  const expected = path.join(dist, 'index.html');
+  if (resolveSafeFilePath('/?cache=1', dist) !== expected) {
+    throw new Error('Development server did not resolve root index safely.');
+  }
+  for (const malicious of ['/../dist-evil/secret', '/%2e%2e/dist-evil/secret', '/%2e%2e/%2e%2e/etc/passwd']) {
+    if (resolveSafeFilePath(malicious, dist) !== null) {
+      throw new Error(`Development server accepted traversal path: ${malicious}`);
+    }
+  }
 }
 
 async function assertSecurityHeaders() {

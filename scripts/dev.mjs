@@ -4,6 +4,7 @@ import { existsSync, watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildProject } from './build.mjs';
+import { SECURITY_HEADERS } from './security-headers.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,6 +12,7 @@ const root = path.resolve(__dirname, '..');
 const srcDir = path.join(root, 'src');
 const distDir = path.join(root, 'dist');
 const port = Number(process.env.PORT || 5173);
+const securityHeaders = Object.fromEntries(SECURITY_HEADERS);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -20,9 +22,8 @@ const MIME = {
 };
 
 async function serveFile(urlPath) {
-  const filePath = path.join(distDir, urlPath === '/' ? 'index.html' : urlPath.replace(/^\//, ''));
-  const normalized = path.normalize(filePath);
-  if (!normalized.startsWith(distDir)) {
+  const normalized = resolveSafeFilePath(urlPath, distDir);
+  if (!normalized) {
     return { status: 403, body: 'Forbidden', type: 'text/plain; charset=utf-8' };
   }
 
@@ -34,6 +35,22 @@ async function serveFile(urlPath) {
   const type = MIME[ext] || 'application/octet-stream';
   const body = await readFile(normalized);
   return { status: 200, body, type };
+}
+
+export function resolveSafeFilePath(urlPath, rootDirectory) {
+  let pathname;
+  try {
+    pathname = decodeURIComponent(String(urlPath || '/').split(/[?#]/, 1)[0]);
+  } catch {
+    return null;
+  }
+  if (!pathname.startsWith('/') || pathname.includes('\\') || pathname.includes('\0')) return null;
+  if (pathname.split('/').some((segment) => segment === '..')) return null;
+  const relativeUrlPath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const candidate = path.resolve(rootDirectory, relativeUrlPath);
+  const relative = path.relative(rootDirectory, candidate);
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  return candidate;
 }
 
 async function runBuild() {
@@ -49,15 +66,15 @@ async function main() {
   const server = createServer(async (req, res) => {
     try {
       const response = await serveFile(req.url || '/');
-      res.writeHead(response.status, { 'Content-Type': response.type });
+      res.writeHead(response.status, { ...securityHeaders, 'Content-Type': response.type });
       res.end(response.body);
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.writeHead(500, { ...securityHeaders, 'Content-Type': 'text/plain; charset=utf-8' });
       res.end(err?.message || 'Internal Server Error');
     }
   });
 
-  server.listen(port, () => {
+  server.listen(port, '127.0.0.1', () => {
     console.log(`Dev server: http://localhost:${port}`);
   });
 
@@ -75,7 +92,9 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
