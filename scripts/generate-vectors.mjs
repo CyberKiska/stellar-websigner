@@ -4,10 +4,11 @@ import { fileURLToPath } from 'node:url';
 
 import { base64ToBytes, bytesToHexLower, hexToBytes, utf8ToBytes, bytesToBase64 } from '../src/core/bytes.js';
 import { createLocalSep53MessageSignature } from '../src/core/signing.js';
+import { signSep53Message } from '../src/core/sep53.js';
 import { SEP53_CANONICAL_TEST_VECTORS } from '../src/core/sep53-test-vectors.js';
 import { createXdrProofDraft, finalizeXdrProof } from '../src/core/xdr-proof.js';
 import { computeDigests } from '../src/core/hash.js';
-import { HASH_SELECTION, TESTNET_NETWORK_PASSPHRASE } from '../src/core/constants.js';
+import { TESTNET_NETWORK_PASSPHRASE } from '../src/core/constants.js';
 import { derivePublicKeyFromSeed, signBytesWithSeed, signatureHint } from '../src/core/ed25519.js';
 import { decodeEd25519SecretSeed, encodeEd25519PublicKey } from '../src/core/strkey.js';
 import { computeTransactionHash, encodeSignedTxEnvelope } from '../src/core/xdr.js';
@@ -45,15 +46,14 @@ async function makeCanonicalSep53Context(vector) {
 
 async function buildCanonicalSep53Vector(vector) {
   const inputContext = await makeCanonicalSep53Context(vector);
-  const signResult = await createLocalSep53MessageSignature({
-    inputContext,
+  const signResult = await signSep53Message({
+    messageBytes: inputContext.bytes,
     seedBytes: decodeEd25519SecretSeed(vector.seed),
-    signerAddress: vector.address,
   });
-  const signatureHex = bytesToHexLower(base64ToBytes(signResult.doc.signatureB64));
+  const signatureHex = bytesToHexLower(signResult.signature);
   const expectedHexFromB64 = bytesToHexLower(base64ToBytes(vector.signatureB64));
 
-  if (signResult.doc.signatureB64 !== vector.signatureB64 || signatureHex !== vector.signatureHex) {
+  if (signResult.signatureB64 !== vector.signatureB64 || signatureHex !== vector.signatureHex) {
     throw new Error(`${vector.id}: generated signature does not match canonical SEP-53 vector.`);
   }
   if (expectedHexFromB64 !== vector.signatureHex) {
@@ -80,13 +80,13 @@ async function buildCanonicalSep53Vector(vector) {
       sha256Hex: inputContext.digests.sha256.hex,
       sha3_512Hex: inputContext.digests.sha3_512.hex,
     },
-    signatureB64: signResult.doc.signatureB64,
+    signatureB64: signResult.signatureB64,
     signatureHex,
     expected: {
       signatureB64: vector.signatureB64,
       signatureHex: vector.signatureHex,
     },
-    doc: { ...signResult.doc },
+    note: 'Independent raw-message SEP-53 vector; v3 containers sign protected-manifest bytes.',
   };
 }
 
@@ -123,11 +123,10 @@ async function buildVectors() {
   const walletPublic = await derivePublicKeyFromSeed(seedSep7);
   const walletSigner = encodeEd25519PublicKey(walletPublic);
 
-  const draft = createXdrProofDraft({
+  const draft = await createXdrProofDraft({
     inputContext: walletContext,
     signerAddress: walletSigner,
     networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
-    hashSelection: HASH_SELECTION.BOTH,
   });
 
   const txHash = await computeTransactionHash(draft.txXdr, TESTNET_NETWORK_PASSPHRASE);
@@ -142,21 +141,18 @@ async function buildVectors() {
   const xdrResult = await finalizeXdrProof({
     inputContext: walletContext,
     signedXdr,
-    networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
+    draft,
     expectedSigner: walletSigner,
-    expectedManageDataEntries: draft.boundHashes,
-    hashSelection: draft.hashSelection,
   });
 
   const placeholderContext = await makeFileContext('placeholder.bin', utf8ToBytes('placeholder source account flow'));
   const placeholderPublic = await derivePublicKeyFromSeed(seedSep7Placeholder);
   const placeholderSigner = encodeEd25519PublicKey(placeholderPublic);
 
-  const placeholderDraft = createXdrProofDraft({
+  const placeholderDraft = await createXdrProofDraft({
     inputContext: placeholderContext,
     signerAddress: placeholderSigner,
     networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
-    hashSelection: HASH_SELECTION.BOTH,
   });
 
   const placeholderTxHash = await computeTransactionHash(placeholderDraft.txXdr, TESTNET_NETWORK_PASSPHRASE);
@@ -170,17 +166,15 @@ async function buildVectors() {
   const placeholderXdrResult = await finalizeXdrProof({
     inputContext: placeholderContext,
     signedXdr: placeholderSignedXdr,
-    networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
+    draft: placeholderDraft,
     expectedSigner: placeholderSigner,
-    expectedManageDataEntries: placeholderDraft.boundHashes,
-    hashSelection: placeholderDraft.hashSelection,
   });
 
   return {
     vectors: [
       ...canonicalSep53Vectors,
       {
-        id: 'sep53-text-both-hashes-v2',
+        id: 'sep53-protected-manifest-text-v3',
         seedHex: seedBothHex,
         signer: bothResult.signer,
         input: {
@@ -195,7 +189,7 @@ async function buildVectors() {
         doc: { ...bothResult.doc },
       },
       {
-        id: 'sep53-file-both-hashes-v2',
+        id: 'sep53-protected-manifest-file-v3',
         seedHex: seedSingleHex,
         signer: singleResult.signer,
         input: {
@@ -212,7 +206,7 @@ async function buildVectors() {
         doc: { ...singleResult.doc },
       },
       {
-        id: 'xdr-manage-data-file-both-v2',
+        id: 'xdr-protected-manifest-file-v3',
         seedHex: seedSep7Hex,
         signer: walletSigner,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
@@ -240,7 +234,7 @@ async function buildVectors() {
         doc: { ...xdrResult.doc },
       },
       {
-        id: 'xdr-manage-data-explicit-signer-v2',
+        id: 'xdr-protected-manifest-explicit-signer-v3',
         seedHex: seedSep7PlaceholderHex,
         signer: placeholderSigner,
         networkPassphrase: TESTNET_NETWORK_PASSPHRASE,
