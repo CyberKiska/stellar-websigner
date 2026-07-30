@@ -1,4 +1,4 @@
-import { bytesEqual } from './bytes.js';
+import { bytesEqual, wipeBytes } from './bytes.js';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const STRKEY_VERSION_BYTE_ED25519_PUBLIC_KEY = 6 << 3;
@@ -42,29 +42,27 @@ export function isValidSecretSeed(seed) {
 function decodeStrKey(strKey, expectedVersionByte, expectedPayloadLength, expectedPrefix) {
   validateStrKeyShape(strKey, expectedPrefix);
   const bytes = base32Decode(strKey);
-  if (bytes.length < 3) {
-    throw new Error('StrKey is too short.');
+  let payload = null;
+  let checksum = null;
+  try {
+    if (bytes.length < 3) throw new Error('StrKey is too short.');
+    payload = bytes.slice(0, -2);
+    checksum = bytes.slice(-2);
+    const expectedChecksum = crc16XModem(payload);
+    const actualChecksum = checksum[0] | (checksum[1] << 8);
+    if (expectedChecksum !== actualChecksum) throw new Error('Invalid StrKey checksum.');
+    if (payload[0] !== expectedVersionByte) throw new Error('Unexpected StrKey version byte.');
+    const data = payload.slice(1);
+    if (data.length !== expectedPayloadLength) {
+      wipeBytes(data);
+      throw new Error(`Unexpected StrKey payload length: ${data.length}`);
+    }
+    return data;
+  } finally {
+    wipeBytes(bytes);
+    wipeBytes(payload);
+    wipeBytes(checksum);
   }
-
-  const payload = bytes.slice(0, -2);
-  const checksum = bytes.slice(-2);
-  const expectedChecksum = crc16XModem(payload);
-  const actualChecksum = checksum[0] | (checksum[1] << 8);
-  if (expectedChecksum !== actualChecksum) {
-    throw new Error('Invalid StrKey checksum.');
-  }
-
-  const versionByte = payload[0];
-  if (versionByte !== expectedVersionByte) {
-    throw new Error('Unexpected StrKey version byte.');
-  }
-
-  const data = payload.slice(1);
-  if (data.length !== expectedPayloadLength) {
-    throw new Error(`Unexpected StrKey payload length: ${data.length}`);
-  }
-
-  return data;
 }
 
 function validateStrKeyShape(value, expectedPrefix) {
@@ -89,15 +87,20 @@ function encodeStrKey(payload, versionByte) {
     throw new Error('StrKey payload must be Uint8Array.');
   }
   const body = new Uint8Array(payload.length + 1);
-  body[0] = versionByte;
-  body.set(payload, 1);
-
-  const checksum = crc16XModem(body);
-  const out = new Uint8Array(body.length + 2);
-  out.set(body, 0);
-  out[body.length] = checksum & 0xff;
-  out[body.length + 1] = (checksum >>> 8) & 0xff;
-  return base32Encode(out);
+  let out = null;
+  try {
+    body[0] = versionByte;
+    body.set(payload, 1);
+    const checksum = crc16XModem(body);
+    out = new Uint8Array(body.length + 2);
+    out.set(body, 0);
+    out[body.length] = checksum & 0xff;
+    out[body.length + 1] = (checksum >>> 8) & 0xff;
+    return base32Encode(out);
+  } finally {
+    wipeBytes(body);
+    wipeBytes(out);
+  }
 }
 
 function crc16XModem(bytes) {
@@ -145,7 +148,8 @@ function base32Decode(input) {
 
   let bits = 0;
   let value = 0;
-  const out = [];
+  const out = new Uint8Array(Math.floor((clean.length * 5) / 8));
+  let outOffset = 0;
 
   for (let i = 0; i < clean.length; i += 1) {
     const idx = BASE32_ALPHABET.indexOf(clean[i]);
@@ -156,12 +160,13 @@ function base32Decode(input) {
     bits += 5;
 
     if (bits >= 8) {
-      out.push((value >>> (bits - 8)) & 0xff);
+      out[outOffset] = (value >>> (bits - 8)) & 0xff;
+      outOffset += 1;
       bits -= 8;
     }
   }
 
-  return Uint8Array.from(out);
+  return outOffset === out.length ? out : out.slice(0, outOffset);
 }
 
 export function sameAddressBytes(a, b) {

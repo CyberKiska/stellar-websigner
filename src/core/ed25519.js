@@ -1,23 +1,16 @@
-import { base64UrlToBytes, concatBytes } from './bytes.js';
+import { bytesEqual, concatBytes, wipeBytes } from './bytes.js';
+import {
+  assertStrictEd25519PublicKey,
+  assertStrictEd25519Signature,
+  deriveEd25519PublicKey,
+} from './ed25519-validation.js';
 
 const ED25519_PKCS8_PREFIX = hexToBytes('302e020100300506032b657004220420');
 const ED25519_SPKI_PREFIX = hexToBytes('302a300506032b6570032100');
 
-export function randomSeed32() {
-  const cryptoApi = getCrypto();
-  const seed = new Uint8Array(32);
-  cryptoApi.getRandomValues(seed);
-  return seed;
-}
-
 export async function derivePublicKeyFromSeed(seedBytes) {
   assertSeed(seedBytes);
-  const privateKey = await importExtractablePrivateKeyFromSeed(seedBytes);
-  const jwk = await getSubtle().exportKey('jwk', privateKey);
-  if (!jwk || typeof jwk.x !== 'string') {
-    throw new Error('Cannot derive public key from seed.');
-  }
-  return base64UrlToBytes(jwk.x);
+  return deriveEd25519PublicKey(seedBytes);
 }
 
 export async function signBytesWithSeed(seedBytes, messageBytes) {
@@ -26,8 +19,7 @@ export async function signBytesWithSeed(seedBytes, messageBytes) {
     throw new Error('Message must be Uint8Array.');
   }
   const privateKey = await importSigningPrivateKeyFromSeed(seedBytes);
-  const signature = await getSubtle().sign('Ed25519', privateKey, messageBytes);
-  return new Uint8Array(signature);
+  return signWithPrivateKey(privateKey, messageBytes);
 }
 
 export async function verifyBytesWithPublic(publicBytes, messageBytes, signatureBytes) {
@@ -39,14 +31,72 @@ export async function verifyBytesWithPublic(publicBytes, messageBytes, signature
     throw new Error('Signature must be 64 bytes.');
   }
 
+  try {
+    assertStrictEd25519PublicKey(publicBytes);
+    assertStrictEd25519Signature(signatureBytes);
+  } catch {
+    return false;
+  }
+
   const publicKey = await importPublicKey(publicBytes);
   return getSubtle().verify('Ed25519', publicKey, signatureBytes, messageBytes);
 }
 
 export async function generateKeypair() {
-  const seedBytes = randomSeed32();
-  const publicBytes = await derivePublicKeyFromSeed(seedBytes);
-  return { seedBytes, publicBytes };
+  const pair = await getSubtle().generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const pkcs8 = new Uint8Array(await getSubtle().exportKey('pkcs8', pair.privateKey));
+  try {
+    if (pkcs8.length !== ED25519_PKCS8_PREFIX.length + 32) {
+      throw new Error('Unexpected generated Ed25519 PKCS#8 encoding.');
+    }
+    if (!bytesEqual(pkcs8.subarray(0, ED25519_PKCS8_PREFIX.length), ED25519_PKCS8_PREFIX)) {
+      throw new Error('Unexpected generated Ed25519 PKCS#8 prefix.');
+    }
+    const seedBytes = pkcs8.slice(ED25519_PKCS8_PREFIX.length);
+    const publicBytes = new Uint8Array(await getSubtle().exportKey('raw', pair.publicKey));
+    assertStrictEd25519PublicKey(publicBytes);
+    return { seedBytes, publicBytes };
+  } finally {
+    wipeBytes(pkcs8);
+  }
+}
+
+export async function createSigningKeySession(seedBytes) {
+  assertSeed(seedBytes);
+  const ownedSeed = seedBytes.slice();
+  try {
+    const [privateKey, publicBytes] = await Promise.all([
+      importSigningPrivateKeyFromSeed(ownedSeed),
+      derivePublicKeyFromSeed(ownedSeed),
+    ]);
+    let active = true;
+    let key = privateKey;
+    const publicCopy = publicBytes.slice();
+    return Object.freeze({
+      get publicBytes() {
+        return publicCopy.slice();
+      },
+      get active() {
+        return active;
+      },
+      async sign(messageBytes) {
+        if (!active || !key) throw new Error('Signing key session is no longer active.');
+        const capturedKey = key;
+        const signature = await signWithPrivateKey(capturedKey, messageBytes);
+        if (!active || key !== capturedKey) {
+          wipeBytes(signature);
+          throw new Error('Signing key session changed during signing.');
+        }
+        return signature;
+      },
+      destroy() {
+        active = false;
+        key = null;
+      },
+    });
+  } finally {
+    wipeBytes(ownedSeed);
+  }
 }
 
 export function signatureHint(publicBytes) {
@@ -54,17 +104,23 @@ export function signatureHint(publicBytes) {
   return publicBytes.slice(28, 32);
 }
 
-async function importExtractablePrivateKeyFromSeed(seedBytes) {
-  const pkcs8 = concatBytes(ED25519_PKCS8_PREFIX, seedBytes);
-  return getSubtle().importKey('pkcs8', pkcs8, { name: 'Ed25519' }, true, ['sign']);
-}
-
 async function importSigningPrivateKeyFromSeed(seedBytes) {
   const pkcs8 = concatBytes(ED25519_PKCS8_PREFIX, seedBytes);
-  return getSubtle().importKey('pkcs8', pkcs8, { name: 'Ed25519' }, false, ['sign']);
+  try {
+    return await getSubtle().importKey('pkcs8', pkcs8, { name: 'Ed25519' }, false, ['sign']);
+  } finally {
+    wipeBytes(pkcs8);
+  }
+}
+
+async function signWithPrivateKey(privateKey, messageBytes) {
+  const signature = new Uint8Array(await getSubtle().sign('Ed25519', privateKey, messageBytes));
+  assertStrictEd25519Signature(signature);
+  return signature;
 }
 
 async function importPublicKey(publicBytes) {
+  assertStrictEd25519PublicKey(publicBytes);
   try {
     return await getSubtle().importKey('raw', publicBytes, { name: 'Ed25519' }, false, ['verify']);
   } catch {

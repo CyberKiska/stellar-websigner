@@ -1,8 +1,12 @@
+import { assertWellFormedUnicode } from './canonical-json.js';
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export function utf8ToBytes(value) {
-  return textEncoder.encode(String(value));
+  const text = String(value);
+  assertWellFormedUnicode(text);
+  return textEncoder.encode(text);
 }
 
 export function bytesToUtf8(bytes) {
@@ -104,6 +108,28 @@ export function base64ToBytes(base64Value) {
   throw new Error('Base64 decoder is unavailable in this runtime.');
 }
 
+export function canonicalBase64ToBytes(base64Value, { maxBytes = Number.POSITIVE_INFINITY } = {}) {
+  const value = String(base64Value || '');
+  if (!value) throw new Error('Base64 value is empty.');
+  if (value.length % 4 !== 0) throw new Error('Base64 value must use canonical padding.');
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+    throw new Error('Base64 value is not canonical RFC 4648 encoding.');
+  }
+  if (Math.floor((value.length * 3) / 4) > maxBytes + 2) {
+    throw new Error(`Decoded base64 exceeds ${maxBytes} bytes.`);
+  }
+  const out = base64ToBytes(value);
+  if (out.length > maxBytes) throw new Error(`Decoded base64 exceeds ${maxBytes} bytes.`);
+  if (bytesToBase64(out) !== value) {
+    throw new Error('Base64 value has non-canonical pad bits.');
+  }
+  return out;
+}
+
+export function normalizeBase64(base64Value, options) {
+  return bytesToBase64(canonicalBase64ToBytes(base64Value, options));
+}
+
 export function base64UrlToBytes(value) {
   let normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
   while (normalized.length % 4 !== 0) normalized += '=';
@@ -147,10 +173,145 @@ export function shortHex(value, prefix = 10, suffix = 10) {
   return `${hex.slice(0, prefix)}...${hex.slice(hex.length - suffix)}`;
 }
 
-export function safeJsonParse(text) {
+export function safeJsonParse(text, { maxLength = 256 * 1024, maxDepth = 16 } = {}) {
+  const source = String(text);
+  if (source.length > maxLength) {
+    throw new Error(`JSON document exceeds ${maxLength} characters.`);
+  }
   try {
-    return JSON.parse(text);
-  } catch {
+    scanJson(source, maxDepth);
+    const parsed = JSON.parse(source);
+    assertParsedJsonValue(parsed);
+    return parsed;
+  } catch (err) {
+    if (err instanceof Error && /^(Duplicate JSON member|JSON document|JSON nesting|Text contains)/.test(err.message)) {
+      throw err;
+    }
     throw new Error('Malformed JSON.');
   }
+}
+
+function assertParsedJsonValue(value) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('JSON document contains a non-finite number.');
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) assertParsedJsonValue(item);
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value)) assertParsedJsonValue(item);
+    return;
+  }
+  throw new Error('Malformed JSON value.');
+}
+
+function scanJson(source, maxDepth) {
+  let offset = 0;
+  const whitespace = /\s/;
+
+  function skipWhitespace() {
+    while (offset < source.length && whitespace.test(source[offset])) offset += 1;
+  }
+
+  function parseValue(depth) {
+    if (depth > maxDepth) throw new Error(`JSON nesting exceeds ${maxDepth} levels.`);
+    skipWhitespace();
+    const token = source[offset];
+    if (token === '{') return parseObject(depth + 1);
+    if (token === '[') return parseArray(depth + 1);
+    if (token === '"') return parseString();
+    for (const literal of ['true', 'false', 'null']) {
+      if (source.startsWith(literal, offset)) {
+        offset += literal.length;
+        return;
+      }
+    }
+    const match = source.slice(offset).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+    if (!match) throw new Error('Malformed JSON value.');
+    offset += match[0].length;
+  }
+
+  function parseObject(depth) {
+    offset += 1;
+    skipWhitespace();
+    const names = new Set();
+    if (source[offset] === '}') {
+      offset += 1;
+      return;
+    }
+    while (offset < source.length) {
+      skipWhitespace();
+      if (source[offset] !== '"') throw new Error('Malformed JSON object member.');
+      const name = parseString();
+      if (names.has(name)) throw new Error(`Duplicate JSON member: ${name}`);
+      names.add(name);
+      skipWhitespace();
+      if (source[offset] !== ':') throw new Error('Malformed JSON object member.');
+      offset += 1;
+      parseValue(depth);
+      skipWhitespace();
+      if (source[offset] === '}') {
+        offset += 1;
+        return;
+      }
+      if (source[offset] !== ',') throw new Error('Malformed JSON object.');
+      offset += 1;
+    }
+    throw new Error('Malformed JSON object.');
+  }
+
+  function parseArray(depth) {
+    offset += 1;
+    skipWhitespace();
+    if (source[offset] === ']') {
+      offset += 1;
+      return;
+    }
+    while (offset < source.length) {
+      parseValue(depth);
+      skipWhitespace();
+      if (source[offset] === ']') {
+        offset += 1;
+        return;
+      }
+      if (source[offset] !== ',') throw new Error('Malformed JSON array.');
+      offset += 1;
+    }
+    throw new Error('Malformed JSON array.');
+  }
+
+  function parseString() {
+    const start = offset;
+    offset += 1;
+    while (offset < source.length) {
+      const code = source.charCodeAt(offset);
+      if (code === 0x22) {
+        offset += 1;
+        const value = JSON.parse(source.slice(start, offset));
+        assertWellFormedUnicode(value);
+        return value;
+      }
+      if (code < 0x20) throw new Error('Malformed JSON string.');
+      if (code === 0x5c) {
+        offset += 1;
+        if (source[offset] === 'u') {
+          if (!/^[0-9a-fA-F]{4}$/.test(source.slice(offset + 1, offset + 5))) {
+            throw new Error('Malformed JSON Unicode escape.');
+          }
+          offset += 5;
+          continue;
+        }
+        if (!'"\\/bfnrt'.includes(source[offset])) throw new Error('Malformed JSON escape.');
+      }
+      offset += 1;
+    }
+    throw new Error('Malformed JSON string.');
+  }
+
+  parseValue(0);
+  skipWhitespace();
+  if (offset !== source.length) throw new Error('Malformed JSON trailing data.');
 }

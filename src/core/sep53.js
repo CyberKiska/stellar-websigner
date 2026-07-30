@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64, utf8ToBytes } from './bytes.js';
+import { canonicalBase64ToBytes, bytesToBase64, utf8ToBytes, wipeBytes } from './bytes.js';
 import { signBytesWithSeed, verifyBytesWithPublic } from './ed25519.js';
 import { createSha256Stream } from './hash.js';
 import { SEP53_PREFIX } from './constants.js';
@@ -18,19 +18,28 @@ export async function computeSep53Hash(messageBytes) {
   return sha256.finish();
 }
 
-export async function signSep53Message({ seedBytes, messageBytes }) {
+export async function signSep53Message({ seedBytes, signingKeySession, messageBytes }) {
   const payloadHash = await computeSep53Hash(messageBytes);
-  const signature = await signBytesWithSeed(seedBytes, payloadHash);
-  return {
-    payloadHash,
-    signature,
-    signatureB64: bytesToBase64(signature),
-  };
+  try {
+    const signature = signingKeySession
+      ? await signingKeySession.sign(payloadHash)
+      : await signBytesWithSeed(seedBytes, payloadHash);
+    return {
+      signature,
+      signatureB64: bytesToBase64(signature),
+    };
+  } finally {
+    wipeBytes(payloadHash);
+  }
 }
 
 export async function verifySep53Message({ publicKeyBytes, messageBytes, signatureBytes }) {
   const payloadHash = await computeSep53Hash(messageBytes);
-  return verifyBytesWithPublic(publicKeyBytes, payloadHash, signatureBytes);
+  try {
+    return await verifyBytesWithPublic(publicKeyBytes, payloadHash, signatureBytes);
+  } finally {
+    wipeBytes(payloadHash);
+  }
 }
 
 export function readInputContextBytes(inputContext) {
@@ -41,7 +50,7 @@ export function readInputContextBytes(inputContext) {
 }
 
 export function parseSep53Signature(signatureB64) {
-  const signatureBytes = base64ToBytes(String(signatureB64 || ''));
+  const signatureBytes = canonicalBase64ToBytes(String(signatureB64 || ''), { maxBytes: 64 });
   if (signatureBytes.length !== 64) {
     throw new Error(`Expected 64-byte signature, got ${signatureBytes.length}.`);
   }

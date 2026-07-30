@@ -1,50 +1,42 @@
-import { wipeBytes } from './bytes.js';
-
-const CSPRNG_SAMPLE_COUNT = 4;
-const CSPRNG_SAMPLE_BYTES = 32;
-const CSPRNG_MIN_ONE_RATIO = 0.35;
-const CSPRNG_MAX_ONE_RATIO = 0.65;
-
-// Startup smoke test only: this catches gross platform RNG failures and is not
-// a substitute for NIST SP 800-90B entropy-source validation.
-const POPCOUNT_8 = new Uint8Array(256);
-for (let i = 1; i < POPCOUNT_8.length; i += 1) {
-  POPCOUNT_8[i] = POPCOUNT_8[i >> 1] + (i & 1);
-}
+import { hexToBytes, wipeBytes } from './bytes.js';
+import { signBytesWithSeed, verifyBytesWithPublic } from './ed25519.js';
 
 export function assertRuntimeCryptoHealth(options = {}) {
   const cryptoApi = options.cryptoApi || globalThis.crypto;
-  if (!cryptoApi?.getRandomValues) {
-    throw new Error('WebCrypto getRandomValues() is unavailable.');
-  }
-  if (!cryptoApi.subtle) {
+  if (!cryptoApi?.subtle) {
     throw new Error('WebCrypto subtle API is unavailable.');
   }
 
-  const samples = Array.from({ length: CSPRNG_SAMPLE_COUNT }, () => new Uint8Array(CSPRNG_SAMPLE_BYTES));
+  // Deliberately no output-distribution test here. Browser JavaScript cannot
+  // observe the raw entropy source or establish SP 800-90B assurance.
+}
 
+export async function assertEd25519RuntimeHealth() {
+  // RFC 8032, section 7.1, TEST 1. This probes the actual provider and the
+  // application's strict point/scalar pre-validation at startup.
+  const seed = hexToBytes('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60');
+  const publicKey = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a');
+  const expected = hexToBytes(
+    'e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155' +
+      '5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b'
+  );
+  const message = new Uint8Array(0);
   try {
-    for (const sample of samples) {
-      cryptoApi.getRandomValues(sample);
+    const signature = await signBytesWithSeed(seed, message);
+    if (!bytesEqual(signature, expected)) throw new Error('Ed25519 startup signing KAT failed.');
+    if (!(await verifyBytesWithPublic(publicKey, message, expected))) {
+      throw new Error('Ed25519 startup verification KAT failed.');
     }
-
-    for (let i = 0; i < samples.length; i += 1) {
-      for (let j = i + 1; j < samples.length; j += 1) {
-        if (bytesEqual(samples[i], samples[j])) {
-          throw new Error('CSPRNG health check failed: repeated outputs are identical.');
-        }
-      }
-    }
-
-    const oneBits = samples.reduce((total, sample) => total + countOneBits(sample), 0);
-    const oneRatio = oneBits / (CSPRNG_SAMPLE_COUNT * CSPRNG_SAMPLE_BYTES * 8);
-    if (oneRatio < CSPRNG_MIN_ONE_RATIO || oneRatio > CSPRNG_MAX_ONE_RATIO) {
-      throw new Error('CSPRNG health check failed: bit balance is outside the expected sanity range.');
+    const identity = new Uint8Array(32);
+    identity[0] = 1;
+    const forged = new Uint8Array(64);
+    forged[0] = 1;
+    if (await verifyBytesWithPublic(identity, new Uint8Array([1]), forged)) {
+      throw new Error('Ed25519 strict identity-point rejection failed.');
     }
   } finally {
-    for (const sample of samples) {
-      wipeBytes(sample);
-    }
+    wipeBytes(seed);
+    wipeBytes(expected);
   }
 }
 
@@ -55,12 +47,4 @@ function bytesEqual(a, b) {
     diff |= a[i] ^ b[i];
   }
   return diff === 0;
-}
-
-function countOneBits(bytes) {
-  let total = 0;
-  for (const value of bytes) {
-    total += POPCOUNT_8[value];
-  }
-  return total;
 }

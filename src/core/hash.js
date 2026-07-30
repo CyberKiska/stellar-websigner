@@ -121,7 +121,7 @@ export function createSha256Stream(options = {}) {
       if (finished) throw new Error('SHA-256 stream is already finished.');
       finished = true;
 
-      if (!streaming && (await hasNativeSha3_512())) {
+      if (!streaming) {
         const input = concatBufferedChunks(chunks, bufferedLength);
         wipeChunks(chunks);
         chunks = [];
@@ -163,17 +163,6 @@ function assertBytes(value, label) {
   }
 }
 
-let nativeSha3_512Probe;
-
-async function hasNativeSha3_512() {
-  if (!nativeSha3_512Probe) {
-    nativeSha3_512Probe = globalThis.crypto.subtle
-      .digest('SHA-3-512', new Uint8Array(0))
-      .then(() => true)
-      .catch(() => false);
-  }
-  return nativeSha3_512Probe;
-}
 
 function concatBufferedChunks(chunks, totalLength) {
   const out = new Uint8Array(totalLength);
