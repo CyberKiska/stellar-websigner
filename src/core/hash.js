@@ -43,12 +43,25 @@ export async function sha256(bytes) {
   return new Uint8Array(digest);
 }
 
-export async function sha3_512(bytes) {
-  ensureSubtle();
+export async function sha3_512(bytes, options = {}) {
+  assertBytes(bytes, 'SHA3-512 input');
+  const implementation = options.implementation || 'auto';
+  if (!['auto', 'native', 'fallback'].includes(implementation)) {
+    throw new Error(`Unsupported SHA3-512 implementation policy: ${implementation}.`);
+  }
+  if (implementation === 'fallback') {
+    return sha3_512_fallback(bytes);
+  }
+
+  const subtle = options.subtle || getSubtle();
   try {
-    const digest = await globalThis.crypto.subtle.digest('SHA-3-512', bytes);
-    return new Uint8Array(digest);
-  } catch {
+    const digest = new Uint8Array(await subtle.digest('SHA3-512', bytes));
+    if (digest.length !== SHA3_512_OUTPUT_BYTES) {
+      throw new Error(`Native SHA3-512 returned ${digest.length} bytes; expected ${SHA3_512_OUTPUT_BYTES}.`);
+    }
+    return digest;
+  } catch (err) {
+    if (implementation === 'native' || !isNotSupportedError(err)) throw err;
     return sha3_512_fallback(bytes);
   }
 }
@@ -141,14 +154,22 @@ export function createSha256Stream(options = {}) {
 }
 
 export function createSha3_512Stream() {
-  ensureSubtle();
   return createSha3_512StreamingState();
 }
 
 function ensureSubtle() {
+  getSubtle();
+}
+
+function getSubtle() {
   if (!globalThis.crypto?.subtle) {
     throw new Error('WebCrypto subtle API is unavailable.');
   }
+  return globalThis.crypto.subtle;
+}
+
+function isNotSupportedError(err) {
+  return err?.name === 'NotSupportedError';
 }
 
 function sha3_512_fallback(input) {

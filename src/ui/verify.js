@@ -1,5 +1,9 @@
 import { registerSessionWipeHandler } from '../app/session-wipe.js';
-import { createFileInputContext, createTextInputContext } from '../core/input-context.js';
+import {
+  createFileInputContext,
+  createTextInputContext,
+  MAX_TEXT_INPUT_SIZE_BYTES,
+} from '../core/input-context.js';
 import { safeJsonParse, wipeBytes } from '../core/bytes.js';
 import { decodeEd25519PublicKey } from '../core/strkey.js';
 import { diagnosticsForDisplay, signatureDocRequiresInputBytes, verifyDetachedSignature } from '../core/verify.js';
@@ -14,6 +18,7 @@ export function setupVerifyTab(state) {
   const fileInput = byId('verify-file-input');
   const textInput = byId('verify-text-input');
   const textPasteBtn = byId('verify-text-paste');
+  textInput.maxLength = MAX_TEXT_INPUT_SIZE_BYTES;
 
   const sigFileInput = byId('verify-sig-file');
   const expectedSignerEl = byId('verify-expected-signer');
@@ -322,6 +327,9 @@ export function setupVerifyTab(state) {
     }
     try {
       const text = await navigator.clipboard.readText();
+      if (text.length > MAX_TEXT_INPUT_SIZE_BYTES) {
+        throw new Error(`Text input is too large. Maximum supported UTF-8 size is ${MAX_TEXT_INPUT_SIZE_BYTES} bytes.`);
+      }
       textInput.value = text;
       modeTextEl.checked = true;
       modeFileEl.checked = false;
@@ -329,7 +337,8 @@ export function setupVerifyTab(state) {
       cancelActiveOperation();
       applyModeUi();
       clearInputContext();
-      await refreshDigestContext({ silent: true });
+      const context = await refreshDigestContext({ strict: true, silent: true });
+      if (!context) throw new Error('Pasted text could not be prepared for verification.');
       showToast('success', `Pasted ${text.length} characters.`);
     } catch (err) {
       showToast('error', friendlyError(err));

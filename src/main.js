@@ -22,7 +22,6 @@ import { setupKeysTab } from './ui/keys.js';
 import { setupLayout } from './ui/layout.js';
 import { setupSignTab } from './ui/sign.js';
 import { setupVerifyTab } from './ui/verify.js';
-import { showToast } from './ui/common.js';
 
 const state = {
   keys: {
@@ -57,10 +56,21 @@ async function main() {
 try {
   await main();
 } catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
   const statusText = document.getElementById('sys-status-text');
   const statusDot = document.getElementById('sys-status-dot');
-  if (statusText) statusText.textContent = 'Cryptography unavailable';
+  if (statusText) {
+    statusText.textContent = 'Cryptography unavailable';
+    statusText.title = message;
+  }
   if (statusDot) statusDot.setAttribute('aria-label', 'System status: cryptography unavailable');
-  showToast('error', err instanceof Error ? err.message : String(err));
+  for (const control of document.querySelectorAll('button, input, select, textarea')) {
+    control.disabled = true;
+  }
+  const failure = document.createElement('div');
+  failure.className = 'startup-failure';
+  failure.setAttribute('role', 'alert');
+  failure.textContent = `Cryptography unavailable; all operations are disabled. ${message}`;
+  document.querySelector('main')?.prepend(failure);
   throw err;
 }

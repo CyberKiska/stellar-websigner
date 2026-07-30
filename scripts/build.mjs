@@ -78,7 +78,7 @@ async function buildCopy({ srcDir, distDir, basePath, version, commit, localSecr
 
 export async function buildProject({ minify = true, mode = process.env.BUILD_MODE || 'auto' } = {}) {
   const srcDir = path.join(root, 'src');
-  const distDir = path.join(root, 'dist');
+  const distDir = resolveBuildOutputDirectory();
   const basePath = normalizeBasePath(process.env.BASE_PATH || '/');
   const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const version = String(packageJson.version || 'unknown');
@@ -126,6 +126,15 @@ export async function buildProject({ minify = true, mode = process.env.BUILD_MOD
   await writeSecurityHeaders(distDir);
   await writeArtifactManifest(distDir);
   console.log(`Build completed (bundle mode). basePath=${basePath}`);
+}
+
+export function resolveBuildOutputDirectory(variant = process.env.BUILD_VARIANT || '') {
+  const name = String(variant || '').trim();
+  if (!name) return path.join(root, 'dist');
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) {
+    throw new Error(`Unsafe BUILD_VARIANT: ${variant}`);
+  }
+  return path.join(root, '.playwright-dist', name);
 }
 
 async function writeArtifactManifest(distDir) {

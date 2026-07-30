@@ -10,9 +10,12 @@
     "bench": "node scripts/bench.mjs",
     "selftest": "node scripts/selftest.mjs",
     "vectors": "node scripts/generate-vectors.mjs",
-    "check": "npm run selftest && npm run vectors && npm run build"
+    "test:browser": "playwright test",
+    "check": "npm run selftest && npm run vectors && npm run build",
+    "check:production": "npm run check && npm run test:browser"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "esbuild": "^0.28.1"
   }
 }

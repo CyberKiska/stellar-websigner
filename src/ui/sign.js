@@ -1,7 +1,11 @@
 import { registerSessionWipeHandler } from '../app/session-wipe.js';
 import { base64ToBytes, wipeBytes } from '../core/bytes.js';
 import { PUBLIC_NETWORK_PASSPHRASE } from '../core/constants.js';
-import { createFileInputContext, createTextInputContext } from '../core/input-context.js';
+import {
+  createFileInputContext,
+  createTextInputContext,
+  MAX_TEXT_INPUT_SIZE_BYTES,
+} from '../core/input-context.js';
 import { createLocalSep53MessageSignature } from '../core/signing.js';
 import { createXdrProofDraft, finalizeXdrProof } from '../core/xdr-proof.js';
 import {
@@ -24,6 +28,7 @@ export function setupSignTab(state) {
   const fileInput = byId('sign-file-input');
   const textInput = byId('sign-text-input');
   const textPasteBtn = byId('sign-text-paste');
+  textInput.maxLength = MAX_TEXT_INPUT_SIZE_BYTES;
 
   const sha256HexEl = byId('sign-sha256-hex');
   const sha3HexEl = byId('sign-sha3-hex');
@@ -511,12 +516,16 @@ export function setupSignTab(state) {
     }
     try {
       const value = await navigator.clipboard.readText();
+      if (value.length > MAX_TEXT_INPUT_SIZE_BYTES) {
+        throw new Error(`Text input is too large. Maximum supported UTF-8 size is ${MAX_TEXT_INPUT_SIZE_BYTES} bytes.`);
+      }
       textInput.value = value;
       modeTextEl.checked = true;
       modeFileEl.checked = false;
       applyInputModeUi();
       handleInputChanged();
-      await refreshDigestContext({ silent: true });
+      const context = await refreshDigestContext({ strict: true, silent: true });
+      if (!context) throw new Error('Pasted text could not be prepared for signing.');
       showToast('success', `Pasted ${value.length} characters.`);
     } catch (err) {
       showToast('error', friendlyError(err));

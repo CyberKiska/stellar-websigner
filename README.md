@@ -31,17 +31,21 @@ SEP-53 signs `SHA-256("Stellar Signed Message:\n" || messageBytes)` with Ed25519
 
 Verification performs provider-independent Ed25519 checks before Web Crypto: canonical point encodings, prime-order subgroup membership for the public key and `R`, rejection of the identity point, and canonical `S < L`. A startup RFC 8032 known-answer test exercises the actual Web Crypto provider.
 
+SHA3-512 first probes the proposed WebCrypto `SHA3-512` identifier and falls back to the bundled FIPS 202 implementation only when the provider reports `NotSupportedError`. Other provider failures are fatal. The proposed native identifier is from the unofficial [Modern Algorithms in the Web Cryptography API](https://wicg.github.io/webcrypto-modern-algos/) draft and is not assumed to be universally available.
+
 ### Security model
 
 - No backend.
 - No runtime network calls.
 - No CDN.
 - No telemetry.
-- No persistent secret storage. Imported seed bytes are decoded into a single non-extractable signing `CryptoKey` and temporary byte buffers are cleared in `finally` blocks.
+- No persistent secret storage. Signing uses a non-extractable `CryptoKey`, and temporary byte buffers are cleared in `finally` blocks.
 - Plaintext secret download and secret clipboard export are disabled.
 - Secret form controls and key state are cleared on session end, unload/pagehide, and BFCache restoration.
 
 Cleanup is best effort, not guaranteed zeroization: JavaScript strings, browser form history, discarded `CryptoKey` material, the OS clipboard, and browser memory are outside the application's complete control.
+
+Public-key derivation does not perform secret-scalar arithmetic in application JavaScript. Generated keypairs reuse the provider-generated public key and verify that it matches the signing key. Imported seeds prefer the proposed `subtle.getPublicKey()` provider operation on a non-extractable key. When unavailable, compatibility requires a temporary extractable provider key and private JWK export; the exported `d` value is checked against the seed and references are immediately cleared, but its immutable string storage cannot be guaranteed zeroized. A provider failure other than explicit lack of support is not silently downgraded.
 
 This app protects against accidental network disclosure, malformed signature documents, unsafe XDR proof envelopes, and common deployment mistakes when the required headers are installed. It does not protect a secret seed from a compromised browser, malicious extension, malicious same-origin release, compromised deployment pipeline, or operating-system compromise. Online JavaScript origin integrity is private-key integrity. Prefer the external-wallet flow; use local-seed signing only from an independently verified offline artifact on a dedicated device/origin.
 
@@ -64,7 +68,7 @@ New signatures use JSON schema `stellar-signature/v3`. Schema v2 remains verific
 - JSON parsing rejects duplicate members, excessive size/depth, unknown fields, and missing fields;
 - binary fields require canonical padded RFC 4648 Base64.
 
-Text mode signs UTF-8 of the textarea DOM value, with no Unicode normalization and with the browser's textarea newline behavior; unpaired UTF-16 surrogates are rejected. Verifiers must supply the same DOM text value.
+Text mode signs UTF-8 of the textarea DOM value, with no Unicode normalization and with the browser's textarea newline behavior; unpaired UTF-16 surrogates are rejected. Verifiers must supply the same DOM text value. Text is limited to 1 MiB after UTF-8 encoding and is hashed in cooperative, cancellable chunks.
 
 For local signing, the protected manifest itself is the SEP-53 message. For external signing, SHA-256 of that manifest is stored in the namespaced `org.stellar-websigner.manifest.sha256` `ManageData` entry. These are detached immutable-content proofs; they have no freshness, expiry, relying-party challenge, or anti-replay semantics and must not be treated as fresh authorization.
 
@@ -168,6 +172,19 @@ Covers:
 - exact unsigned-XDR round-trip binding and stale-file-context rejection;
 - malformed/extra XDR signature rejection;
 - strict Ed25519 identity/small-order/canonicality policy.
+
+### Production browser security gate
+
+Install the pinned browser engines once, then run the complete release gate:
+
+```bash
+npx playwright install chromium firefox webkit
+npm run check:production
+```
+
+The Playwright suite runs the deployed bundle in Chromium, Firefox, and WebKit. It verifies response security headers and iframe denial, the external-wallet-only build policy, startup Ed25519 provider behavior, key-operation serialization, cancellable SHA3/SHA-256 text hashing, local signing, and navigation/BFCache cleanup.
+
+Local-secret support is capability-gated rather than inferred from the browser name. A provider must pass the RFC 8032 startup signing and verification KAT. A provider that fails is not permitted to continue in a reduced cryptographic mode: all application controls are disabled and a visible fatal error is displayed. The browser gate permits this explicit fail-closed outcome for an engine whose provider is non-conformant; Chromium and Firefox are required to complete the full local-secret flow.
 
 ------------
 

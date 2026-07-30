@@ -3,14 +3,14 @@ import { readFile } from 'node:fs/promises';
 import { existsSync, watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildProject } from './build.mjs';
+import { buildProject, resolveBuildOutputDirectory } from './build.mjs';
 import { SECURITY_HEADERS } from './security-headers.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '..');
 const srcDir = path.join(root, 'src');
-const distDir = path.join(root, 'dist');
+const distDir = resolveBuildOutputDirectory();
 const port = Number(process.env.PORT || 5173);
 const securityHeaders = Object.fromEntries(SECURITY_HEADERS);
 

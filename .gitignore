@@ -6,6 +6,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 coverage/
+playwright-report/
+test-results/
+.playwright-dist/
 scripts/contract-check.mjs
 
 # Notes

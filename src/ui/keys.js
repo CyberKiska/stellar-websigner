@@ -35,11 +35,51 @@ export function setupKeysTab(state) {
     isSecureContext: window.isSecureContext,
     buildPolicy: document.querySelector('meta[name="local-secret-operations"]')?.content,
   });
+  const secretMutationControls = [seedInput, seedToggle, loadSeedBtn, clearSeedFieldBtn, generateBtn, copySeedBtn];
+  const publicMutationControls = [gInput, loadGBtn];
+  let keyOperationEpoch = 0;
+  let keyOperationBusy = false;
+  let generatedSeedDisplay = '';
+
+  function updateKeyControls() {
+    for (const control of secretMutationControls) {
+      control.disabled = localSeedDisabled || keyOperationBusy;
+    }
+    for (const control of publicMutationControls) {
+      control.disabled = keyOperationBusy;
+    }
+    clearBtn.disabled = keyOperationBusy;
+    if (localSeedDisabled) {
+      seedInput.placeholder = 'Disabled by deployment security policy';
+      generateBtn.title = 'Local secret-key operations are disabled by deployment security policy.';
+    }
+  }
+
+  function beginKeyOperation() {
+    if (keyOperationBusy) return null;
+    keyOperationBusy = true;
+    keyOperationEpoch += 1;
+    updateKeyControls();
+    return keyOperationEpoch;
+  }
+
+  function keyOperationIsCurrent(epoch) {
+    return keyOperationBusy && keyOperationEpoch === epoch;
+  }
+
+  function finishKeyOperation(epoch) {
+    if (keyOperationEpoch !== epoch) return;
+    keyOperationBusy = false;
+    updateKeyControls();
+  }
+
+  function invalidateKeyOperations() {
+    keyOperationEpoch += 1;
+    keyOperationBusy = false;
+    updateKeyControls();
+  }
 
   if (localSeedDisabled) {
-    for (const control of [seedInput, seedToggle, loadSeedBtn, clearSeedFieldBtn, generateBtn, copySeedBtn]) {
-      control.disabled = true;
-    }
     seedInput.placeholder = 'Disabled by deployment security policy';
     generateBtn.title = 'Local secret-key operations are disabled by deployment security policy.';
   }
@@ -48,7 +88,8 @@ export function setupKeysTab(state) {
     window.dispatchEvent(new CustomEvent('keys:updated'));
   }
 
-  function wipeSessionSeed() {
+  function wipeSessionSeed({ invalidateOperations = false } = {}) {
+    if (invalidateOperations) invalidateKeyOperations();
     state.keys.signingKeySession?.destroy();
     state.keys.signingKeySession = null;
     if (state.keys.seedBytes) {
@@ -57,6 +98,7 @@ export function setupKeysTab(state) {
     state.keys.seedBytes = null;
     state.keys.signerAddress = '';
     state.keys.source = 'none';
+    generatedSeedDisplay = '';
     seedInput.value = '';
     generatedSeedEl.value = '';
     generatedGEl.value = '';
@@ -71,6 +113,8 @@ export function setupKeysTab(state) {
     state.keys.signingKeySession = signingKeySession;
     state.keys.signerAddress = signerAddress;
     state.keys.source = source;
+    generatedSeedDisplay =
+      seedBytes && source === 'generated-seed' ? encodeEd25519SecretSeed(seedBytes) : '';
     seedInput.value = '';
 
     render();
@@ -79,7 +123,7 @@ export function setupKeysTab(state) {
 
   function render() {
     const seedVisible = state.keys.seedBytes && state.keys.source === 'generated-seed';
-    generatedSeedEl.value = seedVisible ? encodeEd25519SecretSeed(state.keys.seedBytes) : '';
+    generatedSeedEl.value = seedVisible ? generatedSeedDisplay : '';
     generatedGEl.value = state.keys.signerAddress || '';
 
     const lines = [];
@@ -99,6 +143,7 @@ export function setupKeysTab(state) {
 
     infoEl.textContent = lines.join('\n');
     exportBtn.disabled = !state.keys.signerAddress;
+    updateKeyControls();
   }
 
   function maybeConfirmOverwrite(action) {
@@ -141,37 +186,39 @@ export function setupKeysTab(state) {
       if (!auto) showToast('warning', 'Enter S... seed first.');
       return false;
     }
-
-    const seedBytes = decodeEd25519SecretSeed(seedStr);
+    if (!maybeConfirmOverwrite('import-seed')) return false;
+    const epoch = beginKeyOperation();
+    if (epoch === null) return false;
+    let seedBytes = null;
     let signingKeySession = null;
+    let committed = false;
     try {
+      seedBytes = decodeEd25519SecretSeed(seedStr);
+      seedInput.value = '';
       signingKeySession = await createSigningKeySession(seedBytes);
+      if (!keyOperationIsCurrent(epoch)) return false;
+      const signer = encodeEd25519PublicKey(signingKeySession.publicBytes);
+
+      const existingG = gInput.value.trim();
+      if (existingG && existingG !== signer) {
+        throw new Error('G... field does not match signer derived from S...');
+      }
+
+      setState({ signingKeySession, signerAddress: signer, source: 'imported-seed' });
+      committed = true;
+      gInput.value = signer;
+      showToast('success', auto ? 'Seed pasted and loaded automatically.' : 'Secret seed loaded. Signer derived successfully.');
+      return true;
     } finally {
       wipeBytes(seedBytes);
       seedInput.value = '';
+      if (!committed) signingKeySession?.destroy();
+      finishKeyOperation(epoch);
     }
-    const signer = encodeEd25519PublicKey(signingKeySession.publicBytes);
-
-    const existingG = gInput.value.trim();
-    if (existingG && existingG !== signer) {
-      signingKeySession.destroy();
-      throw new Error('G... field does not match signer derived from S...');
-    }
-
-    if (!maybeConfirmOverwrite('import-seed')) {
-      signingKeySession.destroy();
-      return false;
-    }
-
-    setState({ signingKeySession, signerAddress: signer, source: 'imported-seed' });
-    gInput.value = signer;
-    seedInput.value = '';
-
-    showToast('success', auto ? 'Seed pasted and loaded automatically.' : 'Secret seed loaded. Signer derived successfully.');
-    return true;
   }
 
   function loadSignerFromInput({ auto = false } = {}) {
+    if (keyOperationBusy) return false;
     const g = gInput.value.trim();
     if (!g) {
       if (!auto) showToast('warning', 'Enter G... address first.');
@@ -188,29 +235,36 @@ export function setupKeysTab(state) {
   }
 
   generateBtn.addEventListener('click', async () => {
+    let epoch = null;
+    let kp = null;
+    let signingKeySession = null;
+    let committed = false;
     try {
       if (localSeedDisabled) throw new Error('Local secret-key operations are disabled by deployment security policy.');
       if (!maybeConfirmOverwrite('generate')) return;
 
-      generateBtn.disabled = true;
+      epoch = beginKeyOperation();
+      if (epoch === null) return;
       generateBtn.textContent = 'Generating...';
-      const kp = await generateKeypair();
+      kp = await generateKeypair();
+      if (!keyOperationIsCurrent(epoch)) return;
       const signer = encodeEd25519PublicKey(kp.publicBytes);
-      let signingKeySession;
-      try {
-        signingKeySession = await createSigningKeySession(kp.seedBytes);
-      } catch (err) {
-        wipeBytes(kp.seedBytes);
-        throw err;
-      }
+      signingKeySession = await createSigningKeySession(kp.seedBytes, { publicBytes: kp.publicBytes });
+      if (!keyOperationIsCurrent(epoch)) return;
       setState({ seedBytes: kp.seedBytes, signingKeySession, signerAddress: signer, source: 'generated-seed' });
+      committed = true;
 
       showToast('success', 'New Ed25519 keypair generated in memory.');
     } catch (err) {
       showToast('error', friendlyError(err));
     } finally {
-      generateBtn.disabled = localSeedDisabled;
+      if (!committed) {
+        signingKeySession?.destroy();
+        wipeBytes(kp?.seedBytes);
+      }
+      if (epoch !== null) finishKeyOperation(epoch);
       generateBtn.textContent = 'Generate Keypair';
+      updateKeyControls();
     }
   });
 
@@ -222,8 +276,8 @@ export function setupKeysTab(state) {
     } catch (err) {
       showToast('error', friendlyError(err));
     } finally {
-      loadSeedBtn.disabled = localSeedDisabled;
       loadSeedBtn.textContent = 'Load Seed';
+      updateKeyControls();
     }
   });
 
@@ -233,6 +287,7 @@ export function setupKeysTab(state) {
   });
 
   loadGBtn.addEventListener('click', () => {
+    if (keyOperationBusy) return;
     try {
       loadSignerFromInput({ auto: false });
     } catch (err) {
@@ -267,7 +322,6 @@ export function setupKeysTab(state) {
     lines.push(`signer=${state.keys.signerAddress}`);
     lines.push(`mode=${state.keys.source}`);
     lines.push('secretSeed=(never exported by this application)');
-    render();
 
     const fileName = safeFileName(`stellar-keys-export-${signerShortToken(state.keys.signerAddress)}.txt`);
     downloadText(fileName, `${lines.join('\n')}\n`);
@@ -275,6 +329,7 @@ export function setupKeysTab(state) {
   });
 
   clearBtn.addEventListener('click', () => {
+    if (keyOperationBusy) return;
     if (!state.keys.signerAddress && !state.keys.signingKeySession) return;
 
     if (state.keys.signingKeySession) {
@@ -311,7 +366,10 @@ export function setupKeysTab(state) {
     seedToggle.textContent = nextType === 'password' ? 'Show' : 'Hide';
   });
 
-  registerSessionWipeHandler(wipeSessionSeed);
+  registerSessionWipeHandler(() => {
+    wipeSessionSeed({ invalidateOperations: true });
+    render();
+  });
 
   render();
 

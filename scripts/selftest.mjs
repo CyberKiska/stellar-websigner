@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runSelfTest } from '../src/core/selftest.js';
+import { resolveBuildOutputDirectory } from './build.mjs';
 import { HTTP_CSP, META_CSP, SECURITY_HEADERS, securityHeadersText } from './security-headers.mjs';
 import { resolveSafeFilePath } from './dev.mjs';
 
@@ -29,6 +30,7 @@ async function runScriptSelfTests() {
   const tests = [
     ['security headers and meta CSP', assertSecurityHeaders],
     ['development server path containment', assertDevServerPathContainment],
+    ['test build output variant containment', assertBuildVariantContainment],
   ];
   const results = [];
   for (const [name, fn] of tests) {
@@ -40,6 +42,23 @@ async function runScriptSelfTests() {
     }
   }
   return results;
+}
+
+function assertBuildVariantContainment() {
+  const expected = path.join(root, '.playwright-dist', 'browser-enabled');
+  if (resolveBuildOutputDirectory('browser-enabled') !== expected) {
+    throw new Error('Build variant did not resolve inside the dedicated test output directory.');
+  }
+  for (const unsafe of ['..', '../dist', '/tmp/output', 'browser/enabled', '']) {
+    if (unsafe === '') continue;
+    let rejected = false;
+    try {
+      resolveBuildOutputDirectory(unsafe);
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) throw new Error(`Unsafe build variant was accepted: ${unsafe}`);
+  }
 }
 
 async function assertDevServerPathContainment() {

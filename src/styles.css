@@ -702,6 +702,16 @@ button:focus-visible {
   gap: 0.5rem;
 }
 
+.startup-failure {
+  margin: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  font-weight: 600;
+}
+
 .toast {
   padding: 1rem 1.25rem;
   border-radius: var(--radius-md);

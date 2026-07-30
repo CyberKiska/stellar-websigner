@@ -1,11 +1,31 @@
-import { base64ToBytes, bytesToBase64, bytesToHexLower, concatBytes, hexToBytes, safeJsonParse, utf8ToBytes } from './bytes.js';
-import { derivePublicKeyFromSeed, generateKeypair, signatureHint, signBytesWithSeed, verifyBytesWithPublic } from './ed25519.js';
+import {
+  base64ToBytes,
+  bytesEqual,
+  bytesToBase64,
+  bytesToHexLower,
+  concatBytes,
+  hexToBytes,
+  safeJsonParse,
+  utf8ToBytes,
+} from './bytes.js';
+import {
+  createSigningKeySession,
+  derivePublicKeyFromSeed,
+  generateKeypair,
+  signatureHint,
+  signBytesWithSeed,
+  verifyBytesWithPublic,
+} from './ed25519.js';
 import { canonicalJsonStringify } from './canonical-json.js';
 import { localSecretOperationsAllowed } from './deployment-policy.js';
 import { computeDigests, createSha256Stream, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
 import { HASH_ALG, MANAGE_DATA_NAME, PAYLOAD_TYPE, PROOF_TYPE, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
-import { createFileInputContext } from './input-context.js';
+import {
+  createFileInputContext,
+  createTextInputContext,
+  MAX_TEXT_INPUT_SIZE_BYTES,
+} from './input-context.js';
 import { SEP53_CANONICAL_TEST_VECTORS } from './sep53-test-vectors.js';
 import { signSep53Message, verifySep53Message } from './sep53.js';
 import { createXdrProofDraft, finalizeXdrProof } from './xdr-proof.js';
@@ -134,8 +154,8 @@ async function assertFileSignVerifyForSize(size) {
   }
 }
 
-async function assertSha3_512Hex(name, bytes, expectedHex) {
-  const actualHex = bytesToHexLower(await sha3_512(bytes));
+async function assertSha3_512Hex(name, bytes, expectedHex, options = {}) {
+  const actualHex = bytesToHexLower(await sha3_512(bytes, options));
   if (actualHex !== expectedHex) {
     throw new Error(`${name}: expected ${expectedHex}, got ${actualHex}.`);
   }
@@ -239,8 +259,55 @@ export async function runSelfTest() {
       ];
 
       for (const [name, bytes, expectedHex] of vectors) {
-        await assertSha3_512Hex(name, bytes, expectedHex);
+        await assertSha3_512Hex(name, bytes, expectedHex, { implementation: 'fallback' });
       }
+    }),
+
+    createResult('sha3-512 native policy uses proposed name and narrows fallback errors', async () => {
+      const bytes = utf8ToBytes('native SHA3 provider policy');
+      const expected = await sha3_512(bytes, { implementation: 'fallback' });
+      let observedAlgorithm = '';
+      const nativeProvider = {
+        async digest(algorithm) {
+          observedAlgorithm = algorithm;
+          return expected.slice().buffer;
+        },
+      };
+      const native = await sha3_512(bytes, {
+        implementation: 'native',
+        subtle: nativeProvider,
+      });
+      if (observedAlgorithm !== 'SHA3-512') {
+        throw new Error(`Expected SHA3-512 provider name, got ${observedAlgorithm || '(none)'}.`);
+      }
+      if (!bytesEqual(native, expected)) {
+        throw new Error('Native SHA3-512 provider result mismatch.');
+      }
+
+      const notSupported = new Error('unsupported');
+      notSupported.name = 'NotSupportedError';
+      const fallback = await sha3_512(bytes, {
+        subtle: {
+          async digest() {
+            throw notSupported;
+          },
+        },
+      });
+      if (!bytesEqual(fallback, expected)) {
+        throw new Error('SHA3-512 did not fall back after NotSupportedError.');
+      }
+
+      await assertRejects(
+        () =>
+          sha3_512(bytes, {
+            subtle: {
+              async digest() {
+                throw new Error('provider failure');
+              },
+            },
+          }),
+        'provider failure'
+      );
     }),
 
     createResult('streaming digest vectors and corpus', async () => {
@@ -391,6 +458,67 @@ export async function runSelfTest() {
       }
     }),
 
+    createResult('file input context rejects short, empty, overlong, and changing reads', async () => {
+      const bytes = makeDeterministicBytes(64, 0x13572468);
+      for (const returnedLength of [0, 31, 33]) {
+        const file = {
+          name: `invalid-read-${returnedLength}.bin`,
+          size: bytes.length,
+          lastModified: 1700000000002,
+          slice(start, end) {
+            const expectedLength = end - start;
+            const out = new Uint8Array(returnedLength === 33 ? expectedLength + 1 : returnedLength);
+            out.set(bytes.subarray(start, Math.min(end, start + out.length)));
+            return { async arrayBuffer() { return out.buffer; } };
+          },
+        };
+        await assertRejects(
+          () => createFileInputContext(file, { chunkSize: 32, keepBytes: true }),
+          'File read returned'
+        );
+      }
+
+      let sizeReads = 0;
+      const changingFile = {
+        name: 'changing-size.bin',
+        get size() {
+          sizeReads += 1;
+          return sizeReads === 1 ? bytes.length : bytes.length - 1;
+        },
+        lastModified: 1700000000003,
+        slice(start, end) {
+          return new Blob([bytes.subarray(start, end)]);
+        },
+      };
+      await assertRejects(() => createFileInputContext(changingFile), 'File changed while it was being read');
+    }),
+
+    createResult('text input enforces UTF-8 byte limit and cooperative cancellation', async () => {
+      const atLimit = 'a'.repeat(MAX_TEXT_INPUT_SIZE_BYTES);
+      const context = await createTextInputContext(atLimit, { chunkSize: 64 * 1024 });
+      if (context.fileSize !== MAX_TEXT_INPUT_SIZE_BYTES) {
+        throw new Error(`Expected ${MAX_TEXT_INPUT_SIZE_BYTES}-byte text context, got ${context.fileSize}.`);
+      }
+
+      await assertRejects(
+        () => createTextInputContext(`${atLimit}a`),
+        `Maximum supported UTF-8 size is ${MAX_TEXT_INPUT_SIZE_BYTES} bytes`
+      );
+      const multibyteOverflow = '\u20ac'.repeat(Math.floor(MAX_TEXT_INPUT_SIZE_BYTES / 3) + 1);
+      await assertRejects(
+        () => createTextInputContext(multibyteOverflow),
+        `Maximum supported UTF-8 size is ${MAX_TEXT_INPUT_SIZE_BYTES} bytes`
+      );
+
+      const controller = new AbortController();
+      const pending = createTextInputContext('b'.repeat(256 * 1024), {
+        chunkSize: 64,
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 0);
+      await assertRejects(() => pending, 'aborted');
+    }),
+
     createResult('SEP-53 local signing avoids duplicate input buffer', async () => {
       if (typeof process === 'undefined' || typeof process.memoryUsage !== 'function') {
         return;
@@ -489,6 +617,63 @@ export async function runSelfTest() {
           throw new Error('Imported address does not match seed-derived public key.');
         }
       }
+    }),
+
+    createResult('ed25519 public derivation prefers provider and explicitly tests JWK fallback', async () => {
+      const subtle = globalThis.crypto.subtle;
+      const seed = hexToBytes('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60');
+      const expected = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a');
+
+      let providerCalled = false;
+      const providerSubtle = {
+        importKey: subtle.importKey.bind(subtle),
+        exportKey: subtle.exportKey.bind(subtle),
+        async getPublicKey(privateKey, usages) {
+          providerCalled = true;
+          if (privateKey.extractable) throw new Error('Provider path received an extractable private key.');
+          return subtle.importKey('raw', expected, { name: 'Ed25519' }, true, usages);
+        },
+      };
+      const providerDerived = await derivePublicKeyFromSeed(seed, { subtle: providerSubtle });
+      if (!providerCalled || !bytesEqual(providerDerived, expected)) {
+        throw new Error('Provider Ed25519 public-key derivation path mismatch.');
+      }
+
+      let sawExtractableImport = false;
+      const jwkSubtle = {
+        importKey(...args) {
+          if (args[0] === 'pkcs8' && args[3] === true) sawExtractableImport = true;
+          return subtle.importKey(...args);
+        },
+        exportKey: subtle.exportKey.bind(subtle),
+      };
+      const jwkDerived = await derivePublicKeyFromSeed(seed, { subtle: jwkSubtle });
+      if (!sawExtractableImport || !bytesEqual(jwkDerived, expected)) {
+        throw new Error('JWK fallback Ed25519 public-key derivation path mismatch.');
+      }
+
+      await assertRejects(
+        () =>
+          derivePublicKeyFromSeed(seed, {
+            subtle: {
+              importKey: subtle.importKey.bind(subtle),
+              async getPublicKey() {
+                throw new Error('public-key provider failure');
+              },
+            },
+          }),
+        'public-key provider failure'
+      );
+    }),
+
+    createResult('generated signing session rejects a mismatched supplied public key', async () => {
+      const seedA = hexToBytes('0303030303030303030303030303030303030303030303030303030303030303');
+      const seedB = hexToBytes('0404040404040404040404040404040404040404040404040404040404040404');
+      const wrongPublic = await derivePublicKeyFromSeed(seedB);
+      await assertRejects(
+        () => createSigningKeySession(seedA, { publicBytes: wrongPublic }),
+        'does not match the private seed'
+      );
     }),
 
     createResult('ed25519 signing key is non-extractable', async () => {
