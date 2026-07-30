@@ -61,8 +61,11 @@ export async function copyText(value) {
   tmp.remove();
 }
 
-export async function readFileText(file) {
+export async function readFileText(file, { maxBytes = 256 * 1024 } = {}) {
   if (!file) throw new Error('File is missing.');
+  if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > maxBytes) {
+    throw new Error(`File exceeds the ${maxBytes}-byte limit.`);
+  }
   return file.text();
 }
 

@@ -62,7 +62,7 @@ export function setupLayout(state) {
 
   function refreshSecurityContext() {
     const signer = String(state.keys.signerAddress || '').trim();
-    const seedLoaded = Boolean(state.keys.seedBytes);
+    const seedLoaded = Boolean(state.keys.signingKeySession);
 
     if (signer) {
       signerEl.textContent = shortSigner(signer);
@@ -84,21 +84,21 @@ export function setupLayout(state) {
 
     if (seedLoaded) {
       statusDot.className = 'status-indicator armed';
-      statusDot.setAttribute('aria-label', 'System status: Armed');
-      statusText.textContent = 'Armed';
+      statusDot.setAttribute('aria-label', 'Signing key active');
+      statusText.textContent = 'Signing key active';
       return;
     }
 
     if (signer) {
       statusDot.className = 'status-indicator verify-ready';
-      statusDot.setAttribute('aria-label', 'System status: Verify-Ready');
-      statusText.textContent = 'Verify-Ready';
+      statusDot.setAttribute('aria-label', 'Public signer loaded');
+      statusText.textContent = 'Public signer loaded';
       return;
     }
 
     statusDot.className = 'status-indicator ready';
-    statusDot.setAttribute('aria-label', 'System status: Ready');
-    statusText.textContent = 'Ready';
+    statusDot.setAttribute('aria-label', 'WebCrypto checks passed; no key loaded');
+    statusText.textContent = 'No key loaded';
   }
 
   window.addEventListener('keys:updated', refreshSecurityContext);

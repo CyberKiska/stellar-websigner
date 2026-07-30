@@ -34,6 +34,7 @@ export function setupVerifyTab(state) {
   const logEl = byId('verify-log');
 
   let refreshNonce = 0;
+  let verificationEpoch = 0;
   let contextBusy = false;
   let autoExpectedSigner = '';
   let expectedSignerOverridden = false;
@@ -50,15 +51,6 @@ export function setupVerifyTab(state) {
 
   function selectedFile() {
     return fileInput.files?.[0] ?? null;
-  }
-
-  function fileContextMatchesSelection(context, file) {
-    if (!context || context.type !== 'file' || !file) return false;
-    return (
-      context.fileName === String(file.name || '') &&
-      context.fileSize === Number(file.size || 0) &&
-      context.fileLastModified === Number(file.lastModified || 0)
-    );
   }
 
   function applyModeUi() {
@@ -176,13 +168,6 @@ export function setupVerifyTab(state) {
         if (strict) throw new Error('Select original file for verification.');
         return null;
       }
-      if (
-        !requireBytes &&
-        fileContextMatchesSelection(state.verify.inputContext, file) &&
-        !(state.verify.inputContext?.bytes instanceof Uint8Array && state.verify.inputContext.bytes.length > 0)
-      ) {
-        return state.verify.inputContext;
-      }
       const context = await createFileInputContext(file, { keepBytes: requireBytes, onProgress: setProgress, signal });
       throwIfAborted(signal);
       return context;
@@ -234,7 +219,10 @@ export function setupVerifyTab(state) {
     if (!file) {
       throw new Error('Select signature .sig file.');
     }
-    return safeJsonParse(await readFileText(file));
+    return safeJsonParse(await readFileText(file, { maxBytes: 256 * 1024 }), {
+      maxLength: 256 * 1024,
+      maxDepth: 16,
+    });
   }
 
   function renderReport(report) {
@@ -283,6 +271,7 @@ export function setupVerifyTab(state) {
   }
 
   modeFileEl.addEventListener('change', async () => {
+    verificationEpoch += 1;
     cancelActiveOperation();
     applyModeUi();
     clearInputContext();
@@ -293,6 +282,7 @@ export function setupVerifyTab(state) {
   });
 
   modeTextEl.addEventListener('change', async () => {
+    verificationEpoch += 1;
     cancelActiveOperation();
     applyModeUi();
     clearInputContext();
@@ -303,6 +293,7 @@ export function setupVerifyTab(state) {
   });
 
   fileInput.addEventListener('change', async () => {
+    verificationEpoch += 1;
     cancelActiveOperation();
     clearInputContext();
     updateRunAvailability();
@@ -312,6 +303,7 @@ export function setupVerifyTab(state) {
   });
 
   textInput.addEventListener('input', async () => {
+    verificationEpoch += 1;
     cancelActiveOperation();
     clearInputContext();
     updateRunAvailability();
@@ -319,6 +311,7 @@ export function setupVerifyTab(state) {
   });
 
   sigFileInput.addEventListener('change', () => {
+    verificationEpoch += 1;
     updateRunAvailability();
   });
 
@@ -332,6 +325,7 @@ export function setupVerifyTab(state) {
       textInput.value = text;
       modeTextEl.checked = true;
       modeFileEl.checked = false;
+      verificationEpoch += 1;
       cancelActiveOperation();
       applyModeUi();
       clearInputContext();
@@ -343,11 +337,13 @@ export function setupVerifyTab(state) {
   });
 
   expectedSignerEl.addEventListener('input', () => {
+    verificationEpoch += 1;
     expectedSignerOverridden = expectedSignerEl.value.trim() !== autoExpectedSigner;
   });
 
   runBtn.addEventListener('click', async () => {
     const previousLabel = runBtn.textContent;
+    const epoch = verificationEpoch;
     const controller = beginAbortableOperation();
     let operationContext = null;
     contextBusy = true;
@@ -384,6 +380,9 @@ export function setupVerifyTab(state) {
         expectedSigner,
       });
       throwIfAborted(controller.signal);
+      if (epoch !== verificationEpoch) {
+        throw makeAbortError('Verification inputs changed during the operation.');
+      }
 
       renderReport(report);
       appendLog(
@@ -433,7 +432,10 @@ export function setupVerifyTab(state) {
     }
   });
 
-  window.addEventListener('keys:updated', syncExpectedSignerFromSession);
+  window.addEventListener('keys:updated', () => {
+    verificationEpoch += 1;
+    syncExpectedSignerFromSession();
+  });
   registerSessionWipeHandler(() => {
     cancelActiveOperation();
     clearInputContext();

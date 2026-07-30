@@ -1,4 +1,6 @@
-import { generateKeypair, derivePublicKeyFromSeed } from '../core/ed25519.js';
+import { createSigningKeySession, generateKeypair } from '../core/ed25519.js';
+import { assertStrictEd25519PublicKey } from '../core/ed25519-validation.js';
+import { localSecretOperationsAllowed } from '../core/deployment-policy.js';
 import { registerSessionWipeHandler } from '../app/session-wipe.js';
 import {
   decodeEd25519PublicKey,
@@ -28,26 +30,47 @@ export function setupKeysTab(state) {
   const exportBtn = byId('keys-export');
   const clearBtn = byId('keys-clear');
   const infoEl = byId('keys-info');
+  const localSeedDisabled = !localSecretOperationsAllowed({
+    hostname: window.location.hostname,
+    isSecureContext: window.isSecureContext,
+    buildPolicy: document.querySelector('meta[name="local-secret-operations"]')?.content,
+  });
+
+  if (localSeedDisabled) {
+    for (const control of [seedInput, seedToggle, loadSeedBtn, clearSeedFieldBtn, generateBtn, copySeedBtn]) {
+      control.disabled = true;
+    }
+    seedInput.placeholder = 'Disabled by deployment security policy';
+    generateBtn.title = 'Local secret-key operations are disabled by deployment security policy.';
+  }
 
   function dispatchUpdate() {
     window.dispatchEvent(new CustomEvent('keys:updated'));
   }
 
   function wipeSessionSeed() {
+    state.keys.signingKeySession?.destroy();
+    state.keys.signingKeySession = null;
     if (state.keys.seedBytes) {
       wipeBytes(state.keys.seedBytes);
     }
     state.keys.seedBytes = null;
+    state.keys.signerAddress = '';
+    state.keys.source = 'none';
+    seedInput.value = '';
+    generatedSeedEl.value = '';
+    generatedGEl.value = '';
+    generatedSeedEl.type = 'password';
+    seedToggle.textContent = 'Show';
   }
 
-  function setState({ seedBytes = null, signerAddress = '', source = 'none' }) {
+  function setState({ seedBytes = null, signingKeySession = null, signerAddress = '', source = 'none' }) {
     wipeSessionSeed();
 
-    const hasSeed = seedBytes instanceof Uint8Array && seedBytes.length === 32;
     state.keys.seedBytes = seedBytes;
+    state.keys.signingKeySession = signingKeySession;
     state.keys.signerAddress = signerAddress;
     state.keys.source = source;
-    state.keys.exported = hasSeed ? false : true;
     seedInput.value = '';
 
     render();
@@ -60,17 +83,17 @@ export function setupKeysTab(state) {
     generatedGEl.value = state.keys.signerAddress || '';
 
     const lines = [];
-    if (!state.keys.signerAddress && !state.keys.seedBytes) {
+    if (!state.keys.signerAddress && !state.keys.signingKeySession) {
       lines.push('No keys loaded in active memory.');
       lines.push('You can load G... for verify-only mode or load/generate S... for signing.');
+      if (localSeedDisabled) lines.push('Deployment safety policy: local secret-key operations are disabled; use an external wallet.');
     } else {
       lines.push(`Signer: ${state.keys.signerAddress || '-'}`);
       lines.push(`Mode: ${state.keys.source}`);
-      lines.push(`Secret Seed: ${state.keys.seedBytes ? 'Loaded' : 'Not Loaded'}`);
-      lines.push('Storage: in-memory only (cleared on reload/end session).');
+      lines.push(`Signing Key: ${state.keys.signingKeySession ? 'Loaded (non-extractable CryptoKey)' : 'Not Loaded'}`);
+      lines.push('Cleanup: best-effort on reload/end session; browser memory cannot guarantee zeroization.');
       if (state.keys.seedBytes) {
-        lines.push(`Secret exported: ${state.keys.exported ? 'YES' : 'NO'}`);
-        lines.push('Warning: secret seed is active in memory.');
+        lines.push('Warning: generated seed is displayed in memory until this session ends.');
       }
     }
 
@@ -79,11 +102,11 @@ export function setupKeysTab(state) {
   }
 
   function maybeConfirmOverwrite(action) {
-    if (!state.keys.signerAddress && !state.keys.seedBytes) return true;
+    if (!state.keys.signerAddress && !state.keys.signingKeySession) return true;
 
     let text = 'A session is already loaded. Replace active session?';
 
-    if (state.keys.seedBytes) {
+    if (state.keys.signingKeySession) {
       if (action === 'generate') {
         text = 'A secret seed is already loaded. Generating a new keypair will overwrite it. Continue?';
       } else if (action === 'import-seed' || action === 'import-signer') {
@@ -112,6 +135,7 @@ export function setupKeysTab(state) {
   }
 
   async function loadSeedFromInput({ auto = false } = {}) {
+    if (localSeedDisabled) throw new Error('Local secret-key operations are disabled by deployment security policy.');
     const seedStr = seedInput.value.trim();
     if (!seedStr) {
       if (!auto) showToast('warning', 'Enter S... seed first.');
@@ -119,17 +143,27 @@ export function setupKeysTab(state) {
     }
 
     const seedBytes = decodeEd25519SecretSeed(seedStr);
-    const derivedPublic = await derivePublicKeyFromSeed(seedBytes);
-    const signer = encodeEd25519PublicKey(derivedPublic);
+    let signingKeySession = null;
+    try {
+      signingKeySession = await createSigningKeySession(seedBytes);
+    } finally {
+      wipeBytes(seedBytes);
+      seedInput.value = '';
+    }
+    const signer = encodeEd25519PublicKey(signingKeySession.publicBytes);
 
     const existingG = gInput.value.trim();
     if (existingG && existingG !== signer) {
+      signingKeySession.destroy();
       throw new Error('G... field does not match signer derived from S...');
     }
 
-    if (!maybeConfirmOverwrite('import-seed')) return false;
+    if (!maybeConfirmOverwrite('import-seed')) {
+      signingKeySession.destroy();
+      return false;
+    }
 
-    setState({ seedBytes, signerAddress: signer, source: 'imported-seed' });
+    setState({ signingKeySession, signerAddress: signer, source: 'imported-seed' });
     gInput.value = signer;
     seedInput.value = '';
 
@@ -144,30 +178,38 @@ export function setupKeysTab(state) {
       return false;
     }
 
-    decodeEd25519PublicKey(g);
+    assertStrictEd25519PublicKey(decodeEd25519PublicKey(g));
 
     if (!maybeConfirmOverwrite('import-signer')) return false;
 
-    setState({ seedBytes: null, signerAddress: g, source: 'verify-only-g' });
+    setState({ signerAddress: g, source: 'verify-only-g' });
     showToast('success', auto ? 'G... address pasted and loaded automatically.' : 'Public address loaded for verify-only mode.');
     return true;
   }
 
   generateBtn.addEventListener('click', async () => {
     try {
+      if (localSeedDisabled) throw new Error('Local secret-key operations are disabled by deployment security policy.');
       if (!maybeConfirmOverwrite('generate')) return;
 
       generateBtn.disabled = true;
       generateBtn.textContent = 'Generating...';
       const kp = await generateKeypair();
       const signer = encodeEd25519PublicKey(kp.publicBytes);
-      setState({ seedBytes: kp.seedBytes, signerAddress: signer, source: 'generated-seed' });
+      let signingKeySession;
+      try {
+        signingKeySession = await createSigningKeySession(kp.seedBytes);
+      } catch (err) {
+        wipeBytes(kp.seedBytes);
+        throw err;
+      }
+      setState({ seedBytes: kp.seedBytes, signingKeySession, signerAddress: signer, source: 'generated-seed' });
 
       showToast('success', 'New Ed25519 keypair generated in memory.');
     } catch (err) {
       showToast('error', friendlyError(err));
     } finally {
-      generateBtn.disabled = false;
+      generateBtn.disabled = localSeedDisabled;
       generateBtn.textContent = 'Generate Keypair';
     }
   });
@@ -180,7 +222,7 @@ export function setupKeysTab(state) {
     } catch (err) {
       showToast('error', friendlyError(err));
     } finally {
-      loadSeedBtn.disabled = false;
+      loadSeedBtn.disabled = localSeedDisabled;
       loadSeedBtn.textContent = 'Load Seed';
     }
   });
@@ -224,47 +266,33 @@ export function setupKeysTab(state) {
     lines.push(`createdAt=${new Date().toISOString()}`);
     lines.push(`signer=${state.keys.signerAddress}`);
     lines.push(`mode=${state.keys.source}`);
-    let secretExported = !state.keys.seedBytes;
-    if (state.keys.seedBytes) {
-      const includeSecret = window.confirm('Include secret seed in export file?');
-      secretExported = includeSecret;
-      lines.push(`secretSeed=${includeSecret ? encodeEd25519SecretSeed(state.keys.seedBytes) : '(redacted)'}`);
-    } else {
-      lines.push('secretSeed=(not loaded)');
-    }
-
-    state.keys.exported = secretExported;
+    lines.push('secretSeed=(never exported by this application)');
     render();
 
     const fileName = safeFileName(`stellar-keys-export-${signerShortToken(state.keys.signerAddress)}.txt`);
     downloadText(fileName, `${lines.join('\n')}\n`);
-    showToast('success', secretExported ? 'Key export downloaded.' : 'Public-only export downloaded. Secret seed was not included.');
+    showToast('success', 'Public-only key information downloaded. Secret seed was not included.');
   });
 
   clearBtn.addEventListener('click', () => {
-    if (!state.keys.signerAddress && !state.keys.seedBytes) return;
+    if (!state.keys.signerAddress && !state.keys.signingKeySession) return;
 
-    if (state.keys.seedBytes) {
-      const prompt = state.keys.exported
-        ? 'End session and wipe secret seed from memory?'
-        : 'Keys have not been exported. They will be lost. Continue?';
+    if (state.keys.signingKeySession) {
+      const prompt = state.keys.seedBytes
+        ? 'End session? Confirm that you recorded the generated seed; it cannot be recovered afterward.'
+        : 'End the signing session and release the in-memory signing key?';
       const confirmed = window.confirm(prompt);
       if (!confirmed) return;
     }
 
-    setState({ seedBytes: null, signerAddress: '', source: 'none' });
+    setState({ signerAddress: '', source: 'none' });
     seedInput.value = '';
     gInput.value = '';
     showToast('info', 'Session cleared.');
   });
 
   copySeedBtn.addEventListener('click', async () => {
-    try {
-      await copyText(generatedSeedEl.value);
-      showToast('success', 'Seed copied.');
-    } catch (err) {
-      showToast('error', friendlyError(err));
-    }
+    showToast('warning', 'Secret clipboard export is disabled. Record the seed using an offline secure backup procedure.');
   });
 
   copyGBtn.addEventListener('click', async () => {

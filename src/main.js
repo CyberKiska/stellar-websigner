@@ -17,7 +17,7 @@
 */
 
 import { installSessionWipeGuards } from './app/session-wipe.js';
-import { assertRuntimeCryptoHealth } from './core/runtime-check.js';
+import { assertEd25519RuntimeHealth, assertRuntimeCryptoHealth } from './core/runtime-check.js';
 import { setupKeysTab } from './ui/keys.js';
 import { setupLayout } from './ui/layout.js';
 import { setupSignTab } from './ui/sign.js';
@@ -27,13 +27,12 @@ import { showToast } from './ui/common.js';
 const state = {
   keys: {
     seedBytes: null,
+    signingKeySession: null,
     signerAddress: '',
     source: 'none',
-    exported: false,
   },
   sign: {
     inputContext: null,
-    fileContextCache: new Map(),
     xdrDraft: null,
     lastSignatureDoc: null,
     lastSignatureJson: '',
@@ -44,19 +43,24 @@ const state = {
   },
 };
 
-function main() {
+async function main() {
   installSessionWipeGuards();
 
-  setupLayout(state);
   assertRuntimeCryptoHealth();
+  await assertEd25519RuntimeHealth();
+  setupLayout(state);
   setupKeysTab(state);
   setupSignTab(state);
   setupVerifyTab(state);
 }
 
 try {
-  main();
+  await main();
 } catch (err) {
+  const statusText = document.getElementById('sys-status-text');
+  const statusDot = document.getElementById('sys-status-dot');
+  if (statusText) statusText.textContent = 'Cryptography unavailable';
+  if (statusDot) statusDot.setAttribute('aria-label', 'System status: cryptography unavailable');
   showToast('error', err instanceof Error ? err.message : String(err));
   throw err;
 }

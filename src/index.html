@@ -21,6 +21,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="base-path" content="%BASE_PATH%" />
+    <meta name="local-secret-operations" content="%LOCAL_SECRET_POLICY%" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; connect-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; require-trusted-types-for 'script'; trusted-types 'none'"
@@ -49,8 +50,8 @@
           <div class="context-row">
             <span>System Status</span>
             <span class="context-val status-line">
-              <span id="sys-status-dot" class="status-indicator ready" aria-label="System status: Ready"></span>
-              <span id="sys-status-text">Ready</span>
+              <span id="sys-status-dot" class="status-indicator ready" aria-label="System status: checking cryptography"></span>
+              <span id="sys-status-text">Checking cryptography…</span>
             </span>
           </div>
           <div class="context-row">
@@ -65,6 +66,7 @@
           <div class="sidebar-note">
             Memory-only session.<br />
             No network calls.<br />
+            Build %APP_VERSION% (%APP_COMMIT%).<br />
             <a href="https://github.com/CyberKiska/stellar-websigner" target="_blank" rel="noopener noreferrer">Source code</a>
           </div>
         </div>
@@ -82,14 +84,14 @@
             <div class="card">
               <h3>Generate New Keypair</h3>
               <p class="muted-copy">
-                Generates Ed25519 keypair in tab memory and displays StrKey values.
+                Generates Ed25519 key material through the browser provider and displays the seed once for offline backup. Prefer an external wallet.
               </p>
 
               <div class="form-group">
                 <label for="keys-generated-seed">Generated Secret Seed (S...)</label>
                 <div class="inline-input">
                   <input id="keys-generated-seed" type="password" readonly />
-                  <button id="keys-copy-seed" class="secondary" type="button">Copy</button>
+                  <button id="keys-copy-seed" class="secondary" type="button" disabled>Clipboard Disabled</button>
                 </div>
               </div>
 
@@ -109,7 +111,7 @@
             <div class="card">
               <h3>Import Seed / Address</h3>
               <p class="danger-copy">
-                Warning: Secret seed gives full control over signatures. Use only on trusted devices.
+                Warning: online JavaScript origin integrity is private-key integrity. Import a production seed only from an independently verified offline build on a dedicated trusted device.
               </p>
 
               <div class="form-group">
@@ -141,7 +143,7 @@
               <div class="card-head">
                 <h3>Active Session</h3>
                 <div class="button-group compact no-margin">
-                  <button id="keys-export" class="secondary" type="button" disabled>Export Keys (.txt)</button>
+                  <button id="keys-export" class="secondary" type="button" disabled>Export Public Info (.txt)</button>
                   <button id="keys-clear" class="danger" type="button">End Session</button>
                 </div>
               </div>
@@ -166,7 +168,7 @@
                   <label class="radio-inline"><input id="sign-mode-text" type="radio" name="sign-input-mode" value="text" /> Plain Text</label>
                 </div>
                 <p class="muted-copy">
-                  The app always computes SHA-256 and SHA3-512. Local signing creates a direct SEP-53 content signature; external-wallet signing creates an XDR proof bound to these digests.
+                  The app computes SHA-256 and SHA3-512, then signs a versioned protected manifest that binds the exact input metadata and both digests. External-wallet signing binds that manifest digest into XDR.
                 </p>
               </div>
 
@@ -217,10 +219,10 @@
             <details id="sign-local-panel" class="card mode-panel full-width" open>
               <summary class="mode-summary">
                 <span class="mode-summary-title">Sign Locally</span>
-                <span class="mode-summary-hint">Direct SEP-53 signature over the selected content</span>
+                <span class="mode-summary-hint">SEP-53 signature over the protected content manifest</span>
               </summary>
               <div class="mode-panel-body">
-                <p class="muted-copy">Uses loaded `S...` from current session memory only.</p>
+                <p class="muted-copy">Uses a loaded non-extractable signing key session. Cleanup is best effort; browser memory cannot guarantee zeroization.</p>
 
                 <div class="button-group compact">
                   <button id="sign-local-run" class="primary" type="button" disabled>Sign Locally</button>

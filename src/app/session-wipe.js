@@ -35,6 +35,12 @@ export function installSessionWipeGuards() {
 
   window.addEventListener('beforeunload', onUnload, { capture: true });
   window.addEventListener('pagehide', onUnload, { capture: true });
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) {
+      runHandlers();
+      window.location.reload();
+    }
+  }, { capture: true });
 
   guardsInstalled = true;
 }
