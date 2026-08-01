@@ -244,6 +244,20 @@ export function setupVerifyTab(state) {
 
     resultDetails.value = diagnosticsForDisplay(report);
 
+    if (report.signatureValid && (!report.inputMatches || !report.contextMatches)) {
+      setResultCardMode('warning');
+      resultTitle.textContent = 'Valid Signature, Context Mismatch';
+      resultBadge.textContent = 'MISMATCH';
+      resultBadge.className = 'badge warning';
+      resultBadge.setAttribute('aria-label', 'Verification result: valid signature with context mismatch');
+      resultMessage.textContent =
+        report.contextErrors?.[0] ||
+        report.inputErrors?.[0] ||
+        'The signature is cryptographically valid, but it is not valid for the selected input or expected signer.';
+      showToast('warning', 'Signature valid; selected verification context does not match.');
+      return;
+    }
+
     if (report.valid) {
       if (Array.isArray(report.warnings) && report.warnings.length > 0) {
         setResultCardMode('warning');
@@ -267,12 +281,12 @@ export function setupVerifyTab(state) {
     }
 
     setResultCardMode('invalid');
-    resultTitle.textContent = 'Verification Failed';
+    resultTitle.textContent = 'Signature Invalid';
     resultBadge.textContent = 'INVALID';
     resultBadge.className = 'badge invalid';
     resultBadge.setAttribute('aria-label', 'Verification result: invalid');
-    resultMessage.textContent = report.errors[0] || 'Verification failed.';
-    showToast('error', 'Verification failed.');
+    resultMessage.textContent = report.signatureErrors?.[0] || report.errors[0] || 'Signature verification failed.';
+    showToast('error', 'Signature verification failed.');
   }
 
   modeFileEl.addEventListener('change', async () => {

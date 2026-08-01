@@ -10,19 +10,23 @@ const IDENTITY = Object.freeze({ x: 0n, y: 1n, z: 1n, t: 0n });
 
 export function assertStrictEd25519PublicKey(publicBytes) {
   assertLength(publicBytes, 32, 'Public key');
-  decodePoint(publicBytes, { allowIdentity: false, requireSubgroup: true });
+  decodePoint(publicBytes, { allowIdentity: false, requireSubgroup: true, label: 'public key' });
 }
 
 export function assertStrictEd25519Signature(signatureBytes) {
   assertLength(signatureBytes, 64, 'Signature');
-  decodePoint(signatureBytes.subarray(0, 32), { allowIdentity: false, requireSubgroup: true });
+  decodePoint(signatureBytes.subarray(0, 32), {
+    allowIdentity: false,
+    requireSubgroup: true,
+    label: 'signature R',
+  });
   const scalar = littleEndianToBigInt(signatureBytes.subarray(32));
   if (scalar >= L) {
     throw new Error('Ed25519 signature scalar S is not canonical.');
   }
 }
 
-function decodePoint(encoded, { allowIdentity, requireSubgroup }) {
+function decodePoint(encoded, { allowIdentity, requireSubgroup, label }) {
   assertLength(encoded, 32, 'Encoded Ed25519 point');
   const copy = encoded.slice();
   const sign = copy[31] >>> 7;
@@ -42,10 +46,12 @@ function decodePoint(encoded, { allowIdentity, requireSubgroup }) {
 
   const point = { x, y, z: 1n, t: mod(x * y) };
   if (!allowIdentity && isIdentity(point)) {
-    throw new Error('Ed25519 identity point is not allowed.');
+    throw new Error(`Stellar WebSigner strict Ed25519 policy rejects the identity ${label} point.`);
   }
   if (requireSubgroup && !isIdentity(scalarMultiply(point, L))) {
-    throw new Error('Ed25519 point is not in the prime-order subgroup.');
+    throw new Error(
+      `Stellar WebSigner strict Ed25519 policy rejects ${label}: the point is not in the prime-order subgroup. This acceptance policy is stricter than common Stellar verifiers.`
+    );
   }
   return point;
 }

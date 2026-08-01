@@ -17,6 +17,8 @@ export const MAX_XDR_ENVELOPE_BYTES = 64 * 1024;
 const KEY_TYPE_ED25519 = 0;
 const PRECOND_NONE = 0;
 const MEMO_NONE = 0;
+const INT64_MIN = -(1n << 63n);
+const INT64_MAX = (1n << 63n) - 1n;
 
 export function buildUnsignedManageDataEnvelope({
   sourcePublicKey,
@@ -410,13 +412,14 @@ class XdrWriter {
 
   writeInt64(value) {
     const n = BigInt(value);
-    if (n < 0n || n > 0x7fffffffffffffffn) {
+    if (n < INT64_MIN || n > INT64_MAX) {
       throw new Error('int64 out of range.');
     }
+    const encoded = BigInt.asUintN(64, n);
     const bytes = new Uint8Array(8);
     const view = new DataView(bytes.buffer);
-    view.setUint32(0, Number((n >> 32n) & 0xffffffffn), false);
-    view.setUint32(4, Number(n & 0xffffffffn), false);
+    view.setUint32(0, Number((encoded >> 32n) & 0xffffffffn), false);
+    view.setUint32(4, Number(encoded & 0xffffffffn), false);
     this.push(bytes);
   }
 
@@ -521,7 +524,7 @@ class XdrReader {
   readInt64() {
     const high = this.readUint32();
     const low = this.readUint32();
-    return (BigInt(high) << 32n) | BigInt(low);
+    return BigInt.asIntN(64, (BigInt(high) << 32n) | BigInt(low));
   }
 
   readOpaqueFixed(length) {

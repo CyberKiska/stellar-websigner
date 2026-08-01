@@ -16,8 +16,9 @@ import {
   signBytesWithSeed,
   verifyBytesWithPublic,
 } from './ed25519.js';
+import { assertStrictEd25519PublicKey, assertStrictEd25519Signature } from './ed25519-validation.js';
 import { canonicalJsonStringify } from './canonical-json.js';
-import { localSecretOperationsAllowed } from './deployment-policy.js';
+import { assertTopLevelBrowsingContext, localSecretOperationsAllowed } from './deployment-policy.js';
 import { computeDigests, createSha256Stream, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
 import { HASH_ALG, MANAGE_DATA_NAME, PAYLOAD_TYPE, PROOF_TYPE, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
@@ -31,8 +32,13 @@ import { signSep53Message, verifySep53Message } from './sep53.js';
 import { createXdrProofDraft, finalizeXdrProof } from './xdr-proof.js';
 import { encodeEd25519PublicKey, decodeEd25519PublicKey, decodeEd25519SecretSeed, encodeEd25519SecretSeed } from './strkey.js';
 import { verifyDetachedSignature } from './verify.js';
-import { computeTransactionHash, encodeSignedTxEnvelope } from './xdr.js';
-import { assertEd25519RuntimeHealth, assertRuntimeCryptoHealth } from './runtime-check.js';
+import {
+  buildUnsignedManageDataEnvelope,
+  computeTransactionHash,
+  encodeSignedTxEnvelope,
+  parseTransactionEnvelope,
+} from './xdr.js';
+import { assertEd25519RuntimeHealth, assertHashRuntimeHealth, assertWebCryptoAvailable } from './runtime-check.js';
 
 function createResult(name, fn) {
   return { name, fn };
@@ -44,6 +50,7 @@ async function makeFileContext(name, bytes, options = {}) {
     type: 'file',
     fileName: name,
     fileSize: bytes.length,
+    mediaType: options.mediaType || '',
     bytes: options.keepBytes === false ? new Uint8Array(0) : bytes,
     digests,
   };
@@ -209,8 +216,9 @@ export async function runSelfTest() {
 
   const tests = [
     createResult('runtime WebCrypto capability probe avoids entropy claims', async () => {
-      assertThrows(() => assertRuntimeCryptoHealth({ cryptoApi: {} }), 'subtle API is unavailable');
-      assertRuntimeCryptoHealth({ cryptoApi: { subtle: {} } });
+      assertThrows(() => assertWebCryptoAvailable({ cryptoApi: {} }), 'subtle API is unavailable');
+      assertWebCryptoAvailable({ cryptoApi: { subtle: {} } });
+      await assertHashRuntimeHealth();
       await assertEd25519RuntimeHealth();
     }),
 
@@ -227,6 +235,12 @@ export async function runSelfTest() {
       if (!localSecretOperationsAllowed({ hostname: 'signer.example', isSecureContext: true })) {
         throw new Error('Dedicated secure origin should allow local secret operations.');
       }
+      const topLevel = {};
+      assertTopLevelBrowsingContext({ topWindow: topLevel, selfWindow: topLevel });
+      assertThrows(
+        () => assertTopLevelBrowsingContext({ topWindow: {}, selfWindow: {} }),
+        'Framing is not permitted'
+      );
     }),
 
     createResult('sha3-512 fallback vectors', async () => {
@@ -699,6 +713,22 @@ export async function runSelfTest() {
       }
     }),
 
+    createResult('strict Ed25519 policy rejects mixed-order public key and signature R with explicit diagnostics', async () => {
+      // Canonical encoding of the Ed25519 base point plus the order-2 point.
+      // It is on-curve and mixed-order, but not in the prime-order subgroup.
+      const mixedOrderPoint = hexToBytes('9599999999999999999999999999999999999999999999999999999999999999');
+      assertThrows(
+        () => assertStrictEd25519PublicKey(mixedOrderPoint),
+        'strict Ed25519 policy rejects public key'
+      );
+      const signature = new Uint8Array(64);
+      signature.set(mixedOrderPoint, 0);
+      assertThrows(
+        () => assertStrictEd25519Signature(signature),
+        'strict Ed25519 policy rejects signature R'
+      );
+    }),
+
     createResult('canonical JSON rejects non-I-JSON values', async () => {
       assertThrows(() => canonicalJsonStringify({ value: Number.NaN }), 'non-finite');
       assertThrows(() => canonicalJsonStringify({ value: '\ud800' }), 'unpaired UTF-16 surrogate');
@@ -808,6 +838,29 @@ export async function runSelfTest() {
       if (verify.valid || !verify.errors.some((line) => line.includes('filename mismatch'))) {
         throw new Error(`Expected filename-bound INVALID result, got: ${verify.errors.join(' | ')}`);
       }
+      if (!verify.signatureValid || verify.inputMatches !== false || verify.contextMatches !== true || verify.summary !== 'MISMATCH') {
+        throw new Error(`Expected valid-signature/input-mismatch outcome, got ${JSON.stringify(verify)}`);
+      }
+    }),
+
+    createResult('v3 treats browser file media type as signed advisory metadata', async () => {
+      const seed = hexToBytes('2323232323232323232323232323232323232323232323232323232323232323');
+      const bytes = utf8ToBytes('{"portable":true}');
+      const signingContext = await makeFileContext('portable.json', bytes, { mediaType: 'application/json' });
+      const verifyingContext = await makeFileContext('portable.json', bytes, { mediaType: 'application/octet-stream' });
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: signingContext,
+        seedBytes: seed,
+        signerAddress: '',
+      });
+      const verify = await verifyDetachedSignature({ signatureDoc: signResult.doc, inputContext: verifyingContext });
+
+      if (!verify.valid || !verify.signatureValid || !verify.inputMatches || verify.summary !== 'VALID_WITH_WARNINGS') {
+        throw new Error(`Expected valid advisory media-type warning, got: ${verify.details.join(' | ')}`);
+      }
+      if (!verify.warnings.some((line) => line.includes('Advisory media type differs'))) {
+        throw new Error(`Expected explicit advisory media-type diagnostic, got: ${verify.warnings.join(' | ')}`);
+      }
     }),
 
     createResult('v3 strict schema rejects unknown top-level key', async () => {
@@ -875,6 +928,23 @@ export async function runSelfTest() {
         }
       })
     ),
+
+    createResult('v3 authenticates the manifest before comparing selected input or signer context', async () => {
+      const { doc } = await makeSignedTextFixture('authenticated manifest ordering');
+      const signature = base64ToBytes(doc.signatureB64);
+      signature[0] ^= 0x01;
+      const wrongContext = await makeTextContext('different selected input');
+      const verify = await verifyDetachedSignature({
+        signatureDoc: { ...doc, signatureB64: bytesToBase64(signature) },
+        inputContext: wrongContext,
+        expectedSigner: doc.signer,
+      });
+
+      if (verify.signatureValid || verify.inputMatches !== null || verify.contextMatches !== null) {
+        throw new Error('Unauthenticated manifest metadata must not drive input or expected-signer comparison results.');
+      }
+      if (verify.summary !== 'INVALID') throw new Error(`Expected INVALID, got ${verify.summary}.`);
+    }),
 
     ...['', 'stellar-signature/v1', 'stellar-signature/v2 ', 'STELLAR-SIGNATURE/V2'].map((schema) =>
       createResult(`strict verifier rejects schema ${JSON.stringify(schema)}`, async () => {
@@ -974,6 +1044,9 @@ export async function runSelfTest() {
       if (!verify.errors.some((line) => line.includes('Protected SHA-256 digest'))) {
         throw new Error(`Expected strict SEP-53 verification failure, got: ${verify.errors.join(' | ')}`);
       }
+      if (!verify.signatureValid || verify.inputMatches !== false || verify.summary !== 'MISMATCH') {
+        throw new Error('Modified input must not be conflated with an invalid cryptographic signature.');
+      }
     }),
 
     createResult('v3 local content signature serializes as RFC 8785 JSON', async () => {
@@ -1020,6 +1093,9 @@ export async function runSelfTest() {
       }
       if (!verify.errors.some((line) => line.includes('Wrong signer'))) {
         throw new Error(`Expected wrong signer diagnostic, got: ${verify.errors.join(' | ')}`);
+      }
+      if (!verify.signatureValid || verify.contextMatches !== false || verify.inputMatches !== true || verify.summary !== 'MISMATCH') {
+        throw new Error('Expected-signer mismatch must remain distinct from cryptographic signature validity.');
       }
     }),
 
@@ -1109,6 +1185,25 @@ export async function runSelfTest() {
       if (!verify.valid) {
         throw new Error(`Expected VALID, got ${verify.summary}`);
       }
+    }),
+
+    createResult('XDR hyper sequence uses signed two-complement int64 semantics', async () => {
+      const sourcePublicKey = new Uint8Array(32);
+      const dataValue = new Uint8Array(32);
+      const build = (sequence) => buildUnsignedManageDataEnvelope({
+        sourcePublicKey,
+        sequence,
+        manageDataEntries: [{ dataName: MANAGE_DATA_NAME.MANIFEST_SHA256, dataValue }],
+      });
+
+      for (const sequence of [-(1n << 63n), -1n, 0n, (1n << 63n) - 1n]) {
+        const parsed = parseTransactionEnvelope(build(sequence).envelopeXdr);
+        if (parsed.transaction.sequence !== sequence) {
+          throw new Error(`Signed int64 round-trip mismatch: expected ${sequence}, got ${parsed.transaction.sequence}.`);
+        }
+      }
+      assertThrows(() => build(-(1n << 63n) - 1n), 'int64 out of range');
+      assertThrows(() => build(1n << 63n), 'int64 out of range');
     }),
 
     createResult('XDR finalization rejects identical-metadata stale content', async () => {

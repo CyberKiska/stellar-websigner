@@ -14,3 +14,5 @@ scripts/contract-check.mjs
 # Notes
 *.md
 !README.md
+!RELEASE-CHECKLIST.md
+!SECURITY.md

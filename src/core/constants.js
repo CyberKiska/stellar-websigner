@@ -1,5 +1,8 @@
 export const SIGNATURE_SCHEMA_V2 = 'stellar-signature/v2';
 export const SIGNATURE_SCHEMA_V3 = 'stellar-signature/v3';
+export const LEGACY_V2_DEPRECATED_SINCE = '2026-08-01';
+export const LEGACY_V2_REMOVAL_NOT_BEFORE = '2027-08-01';
+export const LEGACY_V2_REMOVAL_VERSION = '3.0.0';
 export const SIGNATURE_APPLICATION = 'stellar-websigner';
 export const SIGNATURE_PURPOSE = 'detached-content-authentication';
 export const SEP53_PREFIX = 'Stellar Signed Message:\n';

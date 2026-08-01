@@ -4,15 +4,20 @@
   "private": true,
   "type": "module",
   "description": "Static client-only Stellar (Ed25519) signer and verifier",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "bench": "node scripts/bench.mjs",
     "selftest": "node scripts/selftest.mjs",
     "vectors": "node scripts/generate-vectors.mjs",
+    "verify:artifact": "node scripts/verify-artifact-manifest.mjs",
     "test:browser": "playwright test",
-    "check": "npm run selftest && npm run vectors && npm run build",
-    "check:production": "npm run check && npm run test:browser"
+    "check": "npm run selftest && npm run vectors && npm run build && npm run verify:artifact",
+    "check:production": "npm run check && npm run test:browser",
+    "check:release": "npm run check:production && npm audit --audit-level=high"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

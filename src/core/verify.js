@@ -1,5 +1,8 @@
 import {
   HASH_ALG,
+  LEGACY_V2_DEPRECATED_SINCE,
+  LEGACY_V2_REMOVAL_NOT_BEFORE,
+  LEGACY_V2_REMOVAL_VERSION,
   MANAGE_DATA_NAME,
   PAYLOAD_TYPE,
   PROOF_TYPE,
@@ -7,15 +10,16 @@ import {
   SIGNATURE_SCHEMA_V2,
   SIGNATURE_SCHEMA_V3,
 } from './constants.js';
-import { bytesEqual } from './bytes.js';
+import { bytesEqual, hexToBytes } from './bytes.js';
 import { assertStrictEd25519PublicKey } from './ed25519-validation.js';
 import { parseHashEntries, digestForHashAlgorithm, hashAlgorithmFromManageDataName } from './message.js';
 import { knownNetworkPassphrases, networkHintFromPassphrase } from './network.js';
 import {
   assertExactKeys,
+  compareProtectedManifestInput,
   protectedManifestBytes,
   protectedManifestSha256,
-  validateProtectedManifest,
+  validateProtectedManifestStructure,
 } from './protected-manifest.js';
 import { parseSep53Signature, readInputContextBytes, verifySep53Message } from './sep53.js';
 import { decodeEd25519PublicKey, encodeEd25519PublicKey } from './strkey.js';
@@ -75,7 +79,7 @@ export async function verifyDetachedSignature({ signatureDoc, inputContext, expe
 }
 
 async function verifyV3({ report, checked, signatureDoc, inputContext, expectedSigner, strict }) {
-  const signer = validateSigner({ report, signatureDoc, expectedSigner });
+  const signer = validateSigner({ report, signatureDoc });
   checked.schema = SIGNATURE_SCHEMA_V3;
   const proofType = signatureDoc.protected?.proofType;
   if (proofType !== PROOF_TYPE.SEP53_MESSAGE && proofType !== PROOF_TYPE.XDR_ENVELOPE) {
@@ -87,9 +91,8 @@ async function verifyV3({ report, checked, signatureDoc, inputContext, expectedS
       : ['schema', 'signer', 'protected', 'signedXdr'];
   if (strict) assertExactKeys(signatureDoc, expectedTopKeys, 'signature document');
 
-  validateProtectedManifest({
+  validateProtectedManifestStructure({
     manifest: signatureDoc.protected,
-    inputContext,
     expectedProofType: proofType,
     expectedSigner: signer.address,
   });
@@ -98,12 +101,24 @@ async function verifyV3({ report, checked, signatureDoc, inputContext, expectedS
   checked.payloadType = signatureDoc.protected.payloadType;
   checked.signatureScheme = signatureDoc.protected.signatureScheme;
   checked.hashes = signatureDoc.protected.hashes.map((entry) => ({ ...entry }));
-  report.ok('Protected manifest schema, metadata, input identity, and exact hash set validated.');
+  report.ok('Protected manifest schema, protocol metadata, and canonical hash set are structurally valid.');
 
+  let proofValid;
   if (proofType === PROOF_TYPE.SEP53_MESSAGE) {
-    await verifyV3Sep53({ report, signatureDoc, signer, checked });
+    proofValid = await verifyV3Sep53({ report, signatureDoc, signer, checked });
   } else {
-    await verifyV3Xdr({ report, signatureDoc, signer });
+    proofValid = await verifyV3Xdr({ report, signatureDoc, signer });
+  }
+  if (proofValid) {
+    report.markSignatureValid();
+    validateExpectedSigner({ report, expectedSigner, actualSigner: signer.address });
+    const comparison = compareProtectedManifestInput({ manifest: signatureDoc.protected, inputContext });
+    for (const error of comparison.errors) report.inputMismatch(error);
+    for (const warning of comparison.warnings) report.warn(warning);
+    if (comparison.matches) {
+      report.markInputMatches();
+      report.ok('Selected input type, identity, size, and both content digests match the signed manifest.');
+    }
   }
   return report.finish({ signer: signer.address, checked });
 }
@@ -114,7 +129,7 @@ async function verifyV3Sep53({ report, signatureDoc, signer, checked }) {
     signatureBytes = parseSep53Signature(signatureDoc.signatureB64);
   } catch (err) {
     report.fail(`Malformed signature: ${err.message}`);
-    return;
+    return false;
   }
   const manifestBytes = protectedManifestBytes(signatureDoc.protected);
   checked.messageBytesLength = manifestBytes.length;
@@ -123,8 +138,12 @@ async function verifyV3Sep53({ report, signatureDoc, signer, checked }) {
     messageBytes: manifestBytes,
     signatureBytes,
   });
-  if (valid) report.ok('SEP-53 signature over the canonical protected manifest is valid.');
-  else report.fail('SEP-53 protected-manifest signature verification failed.');
+  if (valid) {
+    report.ok('SEP-53 signature over the canonical protected manifest is valid.');
+    return true;
+  }
+  report.fail('SEP-53 protected-manifest signature verification failed.');
+  return false;
 }
 
 async function verifyV3Xdr({ report, signatureDoc, signer }) {
@@ -133,7 +152,7 @@ async function verifyV3Xdr({ report, signatureDoc, signer }) {
     parsed = parseTransactionEnvelope(signatureDoc.signedXdr);
   } catch (err) {
     report.fail(`Malformed signedXdr: ${err.message}`);
-    return;
+    return false;
   }
   const manifestDigest = await protectedManifestSha256(signatureDoc.protected);
   let safe;
@@ -143,12 +162,12 @@ async function verifyV3Xdr({ report, signatureDoc, signer }) {
     });
   } catch (err) {
     report.fail(err.message);
-    return;
+    return false;
   }
   const sourceAddress = encodeEd25519PublicKey(safe.sourceAccount);
   if (sourceAddress !== signer.address) {
     report.fail(`signedXdr sourceAccount mismatch: signer=${signer.address}, sourceAccount=${sourceAddress}.`);
-    return;
+    return false;
   }
   const passphrase = signatureDoc.protected.network.passphrase;
   const txHash = await computeTransactionHash(parsed.txXdr, passphrase);
@@ -157,26 +176,27 @@ async function verifyV3Xdr({ report, signatureDoc, signer }) {
     match = await findValidDecoratedSignature(parsed.signatures, signer.publicBytes, txHash);
   } catch (err) {
     report.fail(`Invalid signedXdr signature set: ${err.message}`);
-    return;
+    return false;
   }
   if (match) {
     report.ok('XDR signature and protected-manifest digest binding are valid.');
-    return;
+    return true;
   }
   for (const alternative of knownNetworkPassphrases()) {
     if (alternative === passphrase) continue;
     const alternativeHash = await computeTransactionHash(parsed.txXdr, alternative);
     if (await findValidDecoratedSignature(parsed.signatures, signer.publicBytes, alternativeHash)) {
       report.fail('Wrong network passphrase: signature is valid under a different known network passphrase.');
-      return;
+      return false;
     }
   }
   report.fail('No valid signer signature found in signedXdr.');
+  return false;
 }
 
 async function verifyV2({ report, checked, signatureDoc, inputContext, expectedSigner, strict }) {
   checked.schema = SIGNATURE_SCHEMA_V2;
-  const signer = validateSigner({ report, signatureDoc, expectedSigner });
+  const signer = validateSigner({ report, signatureDoc });
   const profile = V2_PROFILES.find(
     (item) =>
       signatureDoc.proofType === item.proofType &&
@@ -189,7 +209,9 @@ async function verifyV2({ report, checked, signatureDoc, inputContext, expectedS
   checked.proofType = signatureDoc.proofType;
   checked.payloadType = signatureDoc.payloadType;
   checked.signatureScheme = signatureDoc.signatureScheme;
-  report.warn('Legacy v2 compatibility: only content bytes/digests are authenticated; surrounding metadata is not signed.');
+  report.warn(
+    `Legacy v2 compatibility (deprecated ${LEGACY_V2_DEPRECATED_SINCE}): only content bytes/digests are authenticated; surrounding metadata is not signed. Verification is scheduled for removal in v${LEGACY_V2_REMOVAL_VERSION}, no earlier than ${LEGACY_V2_REMOVAL_NOT_BEFORE}.`
+  );
 
   if (strict) {
     if (!Array.isArray(signatureDoc.hashes)) throw new Error('Legacy hashes must be an array.');
@@ -200,13 +222,9 @@ async function verifyV2({ report, checked, signatureDoc, inputContext, expectedS
   const entries = parseHashEntries(signatureDoc);
   assertExactHashSet(entries);
   checked.hashes = entries.map((entry) => ({ ...entry }));
-  for (const entry of entries) {
-    const recomputed = digestForHashAlgorithm(inputContext.digests, entry.alg);
-    if (entry.hex !== recomputed.hex) report.fail(`Digest mismatch for ${entry.alg}.`);
-    else report.ok(`Digest match for ${entry.alg}.`);
-  }
-  validateLegacyInput(signatureDoc.input, inputContext);
+  validateLegacyInputStructure(signatureDoc.input);
 
+  let proofValid;
   if (profile.id === 'v2-sep53-content-only') {
     const signatureBytes = parseSep53Signature(signatureDoc.signatureB64);
     const messageBytes = readInputContextBytes(inputContext);
@@ -216,15 +234,35 @@ async function verifyV2({ report, checked, signatureDoc, inputContext, expectedS
       messageBytes,
       signatureBytes,
     });
-    if (valid) report.ok('Legacy SEP-53 content signature is valid.');
-    else report.fail('SEP-53 content signature verification failed.');
+    if (valid) {
+      report.ok('Legacy SEP-53 content signature is valid for the selected bytes.');
+      proofValid = true;
+    } else {
+      report.fail('SEP-53 content signature verification failed.');
+      proofValid = false;
+    }
   } else {
-    await verifyV2Xdr({ report, signatureDoc, inputContext, signer });
+    proofValid = await verifyV2Xdr({ report, signatureDoc, signer });
+  }
+
+  if (proofValid) {
+    report.markSignatureValid();
+    validateExpectedSigner({ report, expectedSigner, actualSigner: signer.address });
+    for (const entry of entries) {
+      const recomputed = digestForHashAlgorithm(inputContext.digests, entry.alg);
+      if (entry.hex !== recomputed.hex) report.inputMismatch(`Legacy digest mismatch for ${entry.alg}.`);
+      else report.ok(`Legacy digest match for ${entry.alg}.`);
+    }
+    compareLegacyInput({ report, input: signatureDoc.input, inputContext });
+    if (profile.id === 'v2-xdr-content-digests-only') {
+      compareLegacyManageDataDigests({ report, signatureDoc, inputContext });
+    }
+    report.markInputMatches();
   }
   return report.finish({ signer: signer.address, checked });
 }
 
-async function verifyV2Xdr({ report, signatureDoc, inputContext, signer }) {
+async function verifyV2Xdr({ report, signatureDoc, signer }) {
   assertExactKeys(signatureDoc.network, ['passphrase', 'hint'], 'legacy network');
   assertExactKeys(signatureDoc.manageData, ['entries'], 'legacy manageData');
   if (signatureDoc.txSourceAccount !== signer.address) throw new Error('Legacy txSourceAccount is required and must match signer.');
@@ -234,9 +272,11 @@ async function verifyV2Xdr({ report, signatureDoc, inputContext, signer }) {
     assertExactKeys(entry, ['name', 'alg', 'digestHex'], `legacy manageData.entries[${index}]`);
     const alg = hashAlgorithmFromManageDataName(entry.name);
     if (!alg || alg !== entry.alg) throw new Error('Legacy ManageData name/algorithm mismatch.');
-    const digest = digestForHashAlgorithm(inputContext.digests, alg);
-    if (entry.digestHex !== digest.hex) throw new Error('Legacy ManageData declared digest mismatch.');
-    return { dataName: entry.name, dataValue: digest.bytes };
+    const digestHexLength = alg === HASH_ALG.SHA256 ? 64 : 128;
+    if (typeof entry.digestHex !== 'string' || entry.digestHex.length !== digestHexLength || !/^[0-9a-f]+$/.test(entry.digestHex)) {
+      throw new Error(`Legacy ManageData ${alg} digest encoding is invalid.`);
+    }
+    return { dataName: entry.name, dataValue: hexToBytes(entry.digestHex) };
   });
   const parsed = parseTransactionEnvelope(signatureDoc.signedXdr);
   const safe = assertSafeManageDataEnvelope(parsed, { expectedEntries });
@@ -247,35 +287,77 @@ async function verifyV2Xdr({ report, signatureDoc, inputContext, signer }) {
   }
   const txHash = await computeTransactionHash(parsed.txXdr, passphrase);
   const match = await findValidDecoratedSignature(parsed.signatures, signer.publicBytes, txHash);
-  if (!match) report.fail('No valid signer signature found in legacy signedXdr.');
-  else report.ok('Legacy XDR signature and digest operations are valid.');
+  if (!match) {
+    report.fail('No valid signer signature found in legacy signedXdr.');
+    return false;
+  }
+  report.ok('Legacy XDR signature and declared digest operations are valid.');
+  return true;
 }
 
-function validateSigner({ report, signatureDoc, expectedSigner }) {
+function validateSigner({ report, signatureDoc }) {
   const address = typeof signatureDoc.signer === 'string' ? signatureDoc.signer : '';
   if (!address || address !== address.trim()) throw new Error('Signer field is missing or non-canonical.');
   const publicBytes = decodeEd25519PublicKey(address);
   assertStrictEd25519PublicKey(publicBytes);
-  const expected = String(expectedSigner || '').trim();
-  if (expected && expected !== address) report.fail(`Wrong signer: expected ${expected}, got ${address}.`);
-  else report.ok('Signer address and Ed25519 public point are valid.');
+  report.ok('Document signer address and strict Ed25519 public-point policy are valid.');
   return { address, publicBytes };
 }
 
-function validateLegacyInput(input, inputContext) {
+function validateExpectedSigner({ report, expectedSigner, actualSigner }) {
+  const expected = String(expectedSigner || '').trim();
+  if (!expected) {
+    report.ok('No external signer expectation was supplied.');
+    report.markContextMatches();
+    return;
+  }
+  try {
+    const publicBytes = decodeEd25519PublicKey(expected);
+    assertStrictEd25519PublicKey(publicBytes);
+  } catch (err) {
+    report.contextMismatch(`Expected signer is invalid: ${err.message}`);
+    return;
+  }
+  if (expected !== actualSigner) {
+    report.contextMismatch(`Wrong signer: expected ${expected}, got ${actualSigner}.`);
+    return;
+  }
+  report.ok('Document signer matches the externally expected signer.');
+  report.markContextMatches();
+}
+
+function validateLegacyInputStructure(input) {
   if (!isPlainObject(input)) throw new Error('Legacy input descriptor is required.');
   if (input.type === 'file') {
     assertExactKeys(input, ['type', 'name', 'size'], 'legacy input');
-    if (inputContext.type !== 'file') throw new Error('Legacy input type mismatch.');
-    if (input.name !== inputContext.fileName) throw new Error('Legacy input filename mismatch.');
   } else if (input.type === 'text') {
     assertExactKeys(input, ['type', 'size'], 'legacy input');
-    if (inputContext.type !== 'text') throw new Error('Legacy input type mismatch.');
   } else {
     throw new Error('Legacy input type is invalid.');
   }
-  if (!Number.isSafeInteger(input.size) || input.size !== inputContext.fileSize) {
-    throw new Error('Legacy input size mismatch.');
+  if (!Number.isSafeInteger(input.size) || input.size < 0) {
+    throw new Error('Legacy input size is invalid.');
+  }
+}
+
+function compareLegacyInput({ report, input, inputContext }) {
+  if (input.type !== inputContext.type) report.inputMismatch('Legacy input type mismatch.');
+  if (input.type === 'file' && inputContext.type === 'file' && input.name !== inputContext.fileName) {
+    report.inputMismatch('Legacy input filename mismatch.');
+  }
+  if (input.size !== inputContext.fileSize) {
+    report.inputMismatch('Legacy input size mismatch.');
+  }
+}
+
+function compareLegacyManageDataDigests({ report, signatureDoc, inputContext }) {
+  for (const entry of signatureDoc.manageData.entries) {
+    const digest = digestForHashAlgorithm(inputContext.digests, entry.alg);
+    if (entry.digestHex !== digest.hex) {
+      report.inputMismatch(`Legacy ManageData declared digest mismatch for ${entry.alg}.`);
+    } else {
+      report.ok(`Legacy ManageData digest match for ${entry.alg}.`);
+    }
   }
 }
 
@@ -293,6 +375,12 @@ function createReport() {
   const details = [];
   const errors = [];
   const warnings = [];
+  const signatureErrors = [];
+  const inputErrors = [];
+  const contextErrors = [];
+  let signatureValid = false;
+  let inputMatches = null;
+  let contextMatches = null;
   return {
     ok(message) {
       details.push(`OK: ${message}`);
@@ -300,20 +388,58 @@ function createReport() {
     fail(message) {
       details.push(`FAIL: ${message}`);
       errors.push(message);
+      signatureErrors.push(message);
+      signatureValid = false;
+    },
+    markSignatureValid() {
+      if (signatureErrors.length > 0) throw new Error('Cannot mark a failed signature proof as valid.');
+      signatureValid = true;
+    },
+    markInputMatches() {
+      if (inputMatches === null) inputMatches = true;
+    },
+    markContextMatches() {
+      if (contextMatches === null) contextMatches = true;
+    },
+    inputMismatch(message) {
+      details.push(`MISMATCH[input]: ${message}`);
+      errors.push(message);
+      inputErrors.push(message);
+      inputMatches = false;
+    },
+    contextMismatch(message) {
+      details.push(`MISMATCH[context]: ${message}`);
+      errors.push(message);
+      contextErrors.push(message);
+      contextMatches = false;
     },
     warn(message) {
       details.push(`WARN: ${message}`);
       warnings.push(message);
     },
     finish({ signer, checked }) {
+      const valid = signatureValid && inputMatches === true && contextMatches === true && signatureErrors.length === 0;
+      const summary = !signatureValid || signatureErrors.length > 0
+        ? 'INVALID'
+        : inputMatches === false || contextMatches === false
+          ? 'MISMATCH'
+          : warnings.length > 0
+            ? 'VALID_WITH_WARNINGS'
+            : 'VALID';
       return {
-        valid: errors.length === 0,
+        valid,
+        signatureValid,
+        inputMatches,
+        contextMatches,
         signer,
         checked,
         details,
         errors,
+        signatureErrors,
+        inputErrors,
+        contextErrors,
         warnings,
-        summary: errors.length === 0 ? 'VALID' : 'INVALID',
+        summary,
       };
     },
   };
@@ -332,7 +458,10 @@ export function validateInputContext(inputContext) {
 
 export function diagnosticsForDisplay(report) {
   const lines = [
-    `Result: ${report.valid ? 'VALID' : 'INVALID'}`,
+    `Result: ${report.summary || (report.valid ? 'VALID' : 'INVALID')}`,
+    `Signature Valid: ${report.signatureValid ? 'YES' : 'NO'}`,
+    `Selected Input Matches: ${formatCheckState(report.inputMatches)}`,
+    `Expected Signer Matches: ${formatCheckState(report.contextMatches)}`,
     `Signer: ${report.signer || '-'}`,
     `Schema: ${report.checked?.schema || '-'}`,
     `Proof Type: ${report.checked?.proofType || '-'}`,
@@ -355,6 +484,12 @@ export function signatureDocRequiresInputBytes(signatureDoc) {
 
 export function sameDigestBytes(a, b) {
   return bytesEqual(a, b);
+}
+
+function formatCheckState(value) {
+  if (value === true) return 'YES';
+  if (value === false) return 'NO';
+  return 'NOT CHECKED';
 }
 
 function isPlainObject(value) {

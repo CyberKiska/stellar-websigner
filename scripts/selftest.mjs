@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -6,6 +7,7 @@ import { runSelfTest } from '../src/core/selftest.js';
 import { resolveBuildOutputDirectory } from './build.mjs';
 import { HTTP_CSP, META_CSP, SECURITY_HEADERS, securityHeadersText } from './security-headers.mjs';
 import { resolveSafeFilePath } from './dev.mjs';
+import { verifyArtifactManifest } from './verify-artifact-manifest.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +33,7 @@ async function runScriptSelfTests() {
     ['security headers and meta CSP', assertSecurityHeaders],
     ['development server path containment', assertDevServerPathContainment],
     ['test build output variant containment', assertBuildVariantContainment],
+    ['artifact manifest exact-set and digest verification', assertArtifactManifestVerification],
   ];
   const results = [];
   for (const [name, fn] of tests) {
@@ -42,6 +45,29 @@ async function runScriptSelfTests() {
     }
   }
   return results;
+}
+
+async function assertArtifactManifestVerification() {
+  const directory = await mkdtemp(path.join(tmpdir(), 'stellar-websigner-artifact-'));
+  try {
+    await writeFile(path.join(directory, 'payload.txt'), 'abc', 'utf8');
+    await writeFile(
+      path.join(directory, 'artifact-manifest.sha256'),
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  payload.txt\n',
+      'utf8'
+    );
+    await verifyArtifactManifest(directory);
+    await writeFile(path.join(directory, 'payload.txt'), 'tampered', 'utf8');
+    let rejected = false;
+    try {
+      await verifyArtifactManifest(directory);
+    } catch (err) {
+      rejected = String(err?.message || err).includes('Artifact digest mismatch');
+    }
+    if (!rejected) throw new Error('Artifact verifier accepted a tampered build file.');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 function assertBuildVariantContainment() {

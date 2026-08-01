@@ -67,6 +67,12 @@ export async function protectedManifestSha256(manifest) {
 }
 
 export function validateProtectedManifest({ manifest, inputContext, expectedProofType, expectedSigner }) {
+  validateProtectedManifestStructure({ manifest, expectedProofType, expectedSigner });
+  const comparison = compareProtectedManifestInput({ manifest, inputContext });
+  if (!comparison.matches) throw new Error(comparison.errors[0]);
+}
+
+export function validateProtectedManifestStructure({ manifest, expectedProofType, expectedSigner }) {
   assertPlainObject(manifest, 'protected');
   const expectedTopKeys = [
     'application',
@@ -93,8 +99,8 @@ export function validateProtectedManifest({ manifest, inputContext, expectedProo
   if (manifest.signatureScheme !== expectedScheme) throw new Error('Protected signatureScheme is invalid.');
   if (manifest.signer !== expectedSigner) throw new Error('Protected signer does not match document signer.');
 
-  validateInput(manifest.input, inputContext);
-  validateHashes(manifest.hashes, inputContext.digests);
+  validateInputDescriptor(manifest.input);
+  validateHashSet(manifest.hashes);
 
   if (expectedProofType === PROOF_TYPE.XDR_ENVELOPE) {
     assertPlainObject(manifest.network, 'protected.network');
@@ -111,33 +117,63 @@ export function validateProtectedManifest({ manifest, inputContext, expectedProo
   protectedManifestBytes(manifest);
 }
 
-function validateInput(input, inputContext) {
+export function compareProtectedManifestInput({ manifest, inputContext }) {
+  const errors = [];
+  const warnings = [];
+  const input = manifest.input;
+
+  if (input.type !== inputContext.type) {
+    errors.push(`Protected input type mismatch: signature requires ${input.type}, selected input is ${inputContext.type}.`);
+  } else if (input.type === 'file' && input.name !== String(inputContext.fileName || '')) {
+    errors.push(`Protected filename mismatch: expected ${input.name}, received ${inputContext.fileName || ''}.`);
+  }
+
+  if (input.size !== inputContext.fileSize) {
+    errors.push(`Protected input size mismatch: expected ${input.size}, received ${inputContext.fileSize}.`);
+  }
+
+  const selectedMediaType = normalizedMediaType(inputContext);
+  if (input.mediaType !== selectedMediaType) {
+    warnings.push(
+      `Advisory media type differs: signed ${input.mediaType}, browser reported ${selectedMediaType}. File.type is environment-dependent and is not used to reject matching content.`
+    );
+  }
+
+  for (let i = 0; i < HASH_ALGORITHMS.length; i += 1) {
+    const entry = manifest.hashes[i];
+    const selected = entry.alg === HASH_ALG.SHA256 ? inputContext.digests.sha256 : inputContext.digests.sha3_512;
+    if (entry.hex !== selected.hex) {
+      errors.push(`Protected ${entry.alg} digest does not match selected input.`);
+    }
+  }
+
+  return { matches: errors.length === 0, errors, warnings };
+}
+
+function validateInputDescriptor(input) {
   assertPlainObject(input, 'protected.input');
-  if (inputContext.type === 'file') {
+  if (input.type === 'file') {
     assertExactKeys(input, ['type', 'name', 'namePolicy', 'size', 'mediaType'], 'protected.input');
-    if (input.type !== 'file') throw new Error('Protected input type does not match selected file.');
     if (input.namePolicy !== 'exact-basename') throw new Error('Protected filename policy is invalid.');
     validateFileName(input.name);
-    if (input.name !== String(inputContext.fileName || '')) {
-      throw new Error(`Protected filename mismatch: expected ${input.name}, received ${inputContext.fileName || ''}.`);
-    }
-  } else if (inputContext.type === 'text') {
+  } else if (input.type === 'text') {
     assertExactKeys(input, ['type', 'size', 'mediaType', 'textEncoding'], 'protected.input');
-    if (input.type !== 'text') throw new Error('Protected input type does not match selected text.');
     if (input.textEncoding !== 'utf-8-dom-value-no-normalization') {
       throw new Error('Protected text encoding policy is invalid.');
     }
   } else {
     throw new Error('Selected input type is invalid.');
   }
-  if (!Number.isSafeInteger(input.size) || input.size < 0 || input.size !== inputContext.fileSize) {
-    throw new Error('Protected input size does not match selected input.');
+  if (!Number.isSafeInteger(input.size) || input.size < 0) {
+    throw new Error('Protected input size is invalid.');
   }
-  const expectedMediaType = normalizedMediaType(inputContext);
-  if (input.mediaType !== expectedMediaType) throw new Error('Protected input mediaType does not match selected input.');
+  validateMediaType(input.mediaType);
+  if (input.type === 'text' && input.mediaType !== 'text/plain;charset=utf-8') {
+    throw new Error('Protected text mediaType is invalid.');
+  }
 }
 
-function validateHashes(hashes, digests) {
+function validateHashSet(hashes) {
   if (!Array.isArray(hashes) || hashes.length !== HASH_ALGORITHMS.length) {
     throw new Error('Protected hashes must contain exactly SHA-256 and SHA3-512.');
   }
@@ -147,8 +183,23 @@ function validateHashes(hashes, digests) {
     assertExactKeys(entry, ['alg', 'hex'], `protected.hashes[${i}]`);
     const alg = HASH_ALGORITHMS[i];
     if (entry.alg !== alg) throw new Error(`Protected hash order/algorithm mismatch at index ${i}.`);
-    const expected = alg === HASH_ALG.SHA256 ? digests.sha256 : digests.sha3_512;
-    if (entry.hex !== expected.hex) throw new Error(`Protected ${alg} digest does not match selected input.`);
+    const expectedLength = alg === HASH_ALG.SHA256 ? 64 : 128;
+    if (typeof entry.hex !== 'string' || entry.hex.length !== expectedLength || !/^[0-9a-f]+$/.test(entry.hex)) {
+      throw new Error(`Protected ${alg} digest encoding is invalid.`);
+    }
+  }
+}
+
+function validateMediaType(value) {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 255 ||
+    value !== value.trim() ||
+    value !== value.toLowerCase() ||
+    /[^\x20-\x7e]/.test(value)
+  ) {
+    throw new Error('Protected input mediaType is not canonical ASCII metadata.');
   }
 }
 

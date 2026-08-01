@@ -154,7 +154,9 @@ async function listFiles(directory) {
   const nested = await Promise.all(
     entries.map((entry) => {
       const absolute = path.join(directory, entry.name);
-      return entry.isDirectory() ? listFiles(absolute) : [absolute];
+      if (entry.isDirectory()) return listFiles(absolute);
+      if (!entry.isFile()) throw new Error(`Build output contains a non-regular file: ${absolute}`);
+      return [absolute];
     })
   );
   return nested.flat();

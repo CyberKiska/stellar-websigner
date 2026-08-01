@@ -145,6 +145,26 @@ test('local-secret flow, operation gate, hashing cancellation, signing, and life
     { alg: 'SHA3-512', hex: SHA3_512_ABC },
   ]);
 
+  await page.locator('#nav-verify').click();
+  await page.locator('#verify-mode-text').check();
+  await page.locator('#verify-text-input').fill('abd');
+  await page.locator('#verify-sig-file').setInputFiles({
+    name: 'abc.sig',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(signatureDocument)),
+  });
+  await expect(page.locator('#verify-run')).toBeEnabled({ timeout: 10_000 });
+  await page.locator('#verify-run').click();
+  await expect(page.locator('#verify-result-badge')).toHaveText('MISMATCH', { timeout: 10_000 });
+  await expect(page.locator('#verify-result-title')).toHaveText('Valid Signature, Context Mismatch');
+  await expect(page.locator('#verify-details')).toHaveValue(/Signature Valid: YES/);
+  await expect(page.locator('#verify-details')).toHaveValue(/Selected Input Matches: NO/);
+
+  await page.locator('#verify-text-input').fill('abc');
+  await expect(page.locator('#verify-run')).toBeEnabled({ timeout: 10_000 });
+  await page.locator('#verify-run').click();
+  await expect(page.locator('#verify-result-badge')).toHaveText('VALID', { timeout: 10_000 });
+
   await page.goto('/missing');
   await page.goBack();
   await expect(page.locator('#sys-status-text')).toHaveText('No key loaded');

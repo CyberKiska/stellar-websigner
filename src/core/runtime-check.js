@@ -1,7 +1,8 @@
-import { hexToBytes, wipeBytes } from './bytes.js';
+import { bytesEqual, hexToBytes, utf8ToBytes, wipeBytes } from './bytes.js';
 import { signBytesWithSeed, verifyBytesWithPublic } from './ed25519.js';
+import { sha256, sha3_512 } from './hash.js';
 
-export function assertRuntimeCryptoHealth(options = {}) {
+export function assertWebCryptoAvailable(options = {}) {
   const cryptoApi = options.cryptoApi || globalThis.crypto;
   if (!cryptoApi?.subtle) {
     throw new Error('WebCrypto subtle API is unavailable.');
@@ -9,6 +10,29 @@ export function assertRuntimeCryptoHealth(options = {}) {
 
   // Deliberately no output-distribution test here. Browser JavaScript cannot
   // observe the raw entropy source or establish SP 800-90B assurance.
+}
+
+export async function assertHashRuntimeHealth() {
+  const message = utf8ToBytes('abc');
+  const expectedSha256 = hexToBytes('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  const expectedSha3 = hexToBytes(
+    'b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e' +
+      '10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0'
+  );
+  try {
+    const [sha256Actual, sha3Actual, sha3Fallback] = await Promise.all([
+      sha256(message),
+      sha3_512(message),
+      sha3_512(message, { implementation: 'fallback' }),
+    ]);
+    if (!bytesEqual(sha256Actual, expectedSha256)) throw new Error('SHA-256 startup KAT failed.');
+    if (!bytesEqual(sha3Actual, expectedSha3)) throw new Error('SHA3-512 startup provider/fallback KAT failed.');
+    if (!bytesEqual(sha3Fallback, expectedSha3)) throw new Error('Bundled SHA3-512 startup KAT failed.');
+  } finally {
+    wipeBytes(message);
+    wipeBytes(expectedSha256);
+    wipeBytes(expectedSha3);
+  }
 }
 
 export async function assertEd25519RuntimeHealth() {
@@ -38,13 +62,4 @@ export async function assertEd25519RuntimeHealth() {
     wipeBytes(seed);
     wipeBytes(expected);
   }
-}
-
-function bytesEqual(a, b) {
-  let diff = a.length ^ b.length;
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i += 1) {
-    diff |= a[i] ^ b[i];
-  }
-  return diff === 0;
 }

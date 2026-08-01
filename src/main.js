@@ -17,7 +17,8 @@
 */
 
 import { installSessionWipeGuards } from './app/session-wipe.js';
-import { assertEd25519RuntimeHealth, assertRuntimeCryptoHealth } from './core/runtime-check.js';
+import { assertTopLevelBrowsingContext, FRAMING_POLICY_ERROR_CODE } from './core/deployment-policy.js';
+import { assertEd25519RuntimeHealth, assertHashRuntimeHealth, assertWebCryptoAvailable } from './core/runtime-check.js';
 import { setupKeysTab } from './ui/keys.js';
 import { setupLayout } from './ui/layout.js';
 import { setupSignTab } from './ui/sign.js';
@@ -43,9 +44,11 @@ const state = {
 };
 
 async function main() {
+  assertTopLevelBrowsingContext({ topWindow: window.top, selfWindow: window.self });
   installSessionWipeGuards();
 
-  assertRuntimeCryptoHealth();
+  assertWebCryptoAvailable();
+  await assertHashRuntimeHealth();
   await assertEd25519RuntimeHealth();
   setupLayout(state);
   setupKeysTab(state);
@@ -57,20 +60,29 @@ try {
   await main();
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
+  const policyBlocked = err?.code === FRAMING_POLICY_ERROR_CODE;
+  const unavailableLabel = policyBlocked ? 'Security policy blocked' : 'Cryptography unavailable';
   const statusText = document.getElementById('sys-status-text');
   const statusDot = document.getElementById('sys-status-dot');
   if (statusText) {
-    statusText.textContent = 'Cryptography unavailable';
+    statusText.textContent = unavailableLabel;
     statusText.title = message;
   }
-  if (statusDot) statusDot.setAttribute('aria-label', 'System status: cryptography unavailable');
+  if (statusDot) statusDot.setAttribute('aria-label', `System status: ${unavailableLabel.toLowerCase()}`);
   for (const control of document.querySelectorAll('button, input, select, textarea')) {
     control.disabled = true;
   }
   const failure = document.createElement('div');
   failure.className = 'startup-failure';
   failure.setAttribute('role', 'alert');
-  failure.textContent = `Cryptography unavailable; all operations are disabled. ${message}`;
-  document.querySelector('main')?.prepend(failure);
+  failure.textContent = policyBlocked
+    ? `Application blocked by security policy; all operations are disabled. ${message}`
+    : `Cryptography unavailable; all operations are disabled. ${message}`;
+  if (policyBlocked) {
+    document.title = 'Stellar WebSigner — Security policy blocked';
+    document.body.replaceChildren(failure);
+  } else {
+    document.querySelector('main')?.prepend(failure);
+  }
   throw err;
 }
