@@ -26,7 +26,7 @@ The local-secret threat model does not include a compromised browser, extension,
 
 ## Release security gate
 
-Run `npm run check:release` with all pinned Playwright browsers installed. This covers self-tests and startup KATs, vectors, the production build, artifact-manifest verification, browser security behavior, and dependency audit. Follow `RELEASE-CHECKLIST.md` for deployment checks.
+Run `npm run check:release` with all pinned Playwright browsers installed. This covers self-tests and startup KATs, independent core regressions, vectors, the production build, artifact-manifest verification, browser security behavior, and dependency audit. Verify the exact upload package again after packaging or transfer, and check the deployed headers and iframe denial before enabling local secrets.
 
 `artifact-manifest.sha256` detects accidental or unauthorized drift only when its expected value is obtained through an independent trusted channel. It is not an authenticity proof when downloaded from the same potentially compromised origin. Maintainer-signed tags and out-of-band signed release attestations remain a separate release provenance step.
 

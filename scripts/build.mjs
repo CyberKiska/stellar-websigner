@@ -1,5 +1,6 @@
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeSecurityHeaders } from './security-headers.mjs';
@@ -13,7 +14,23 @@ function normalizeBasePath(value) {
   let out = value.trim();
   if (!out.startsWith('/')) out = `/${out}`;
   if (!out.endsWith('/')) out = `${out}/`;
+  if (!/^\/(?:[A-Za-z0-9._~-]+\/)*$/.test(out) || out.split('/').some((part) => part === '.' || part === '..')) {
+    throw new Error('BASE_PATH must contain only unreserved URL path segments.');
+  }
   return out;
+}
+
+function buildCommit() {
+  let commit = process.env.GITHUB_SHA || process.env.BUILD_COMMIT;
+  if (!commit) {
+    try {
+      commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    } catch {
+      return 'development';
+    }
+  }
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(commit)) throw new Error('Build commit must be a full Git object ID.');
+  return commit.slice(0, 12);
 }
 
 async function tryLoadEsbuild() {
@@ -76,27 +93,32 @@ async function buildCopy({ srcDir, distDir, basePath, version, commit, localSecr
   ]);
 }
 
-export async function buildProject({ minify = true, mode = process.env.BUILD_MODE || 'auto' } = {}) {
+export async function buildProject({
+  minify = true,
+  mode = process.env.BUILD_MODE || 'auto',
+  target = process.env.BUILD_TARGET || 'standalone',
+  variant = process.env.BUILD_VARIANT || '',
+  basePath: requestedBasePath = process.env.BASE_PATH || '/',
+  localSecretPolicy = process.env.LOCAL_SECRET_POLICY || 'enabled',
+} = {}) {
   const srcDir = path.join(root, 'src');
-  const distDir = resolveBuildOutputDirectory();
-  const basePath = normalizeBasePath(process.env.BASE_PATH || '/');
+  const distDir = resolveBuildOutputDirectory(variant);
+  const basePath = normalizeBasePath(requestedBasePath);
+  const normalizedMode = String(mode || 'auto').toLowerCase();
+  if (!['auto', 'bundle', 'copy'].includes(normalizedMode)) throw new Error(`Unsupported BUILD_MODE: ${mode}`);
+  if (!['standalone', 'pages'].includes(target)) throw new Error(`Unsupported BUILD_TARGET: ${target}`);
+  if (!['enabled', 'disabled'].includes(localSecretPolicy)) throw new Error('LOCAL_SECRET_POLICY must be enabled or disabled.');
+  if (target === 'pages' && localSecretPolicy !== 'disabled') throw new Error('Pages builds require LOCAL_SECRET_POLICY=disabled.');
   const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const version = String(packageJson.version || 'unknown');
-  const commit = String(process.env.GITHUB_SHA || process.env.BUILD_COMMIT || 'development').slice(0, 12);
-  const localSecretPolicy = process.env.LOCAL_SECRET_POLICY === 'disabled' ? 'disabled' : 'enabled';
+  const commit = buildCommit();
 
   await rm(distDir, { recursive: true, force: true });
   await mkdir(distDir, { recursive: true });
 
-  const normalizedMode = String(mode || 'auto').toLowerCase();
-  if (!['auto', 'bundle', 'copy'].includes(normalizedMode)) {
-    throw new Error(`Unsupported BUILD_MODE: ${mode}`);
-  }
-
   if (normalizedMode === 'copy') {
     await buildCopy({ srcDir, distDir, basePath, version, commit, localSecretPolicy });
-    await writeSecurityHeaders(distDir);
-    await writeArtifactManifest(distDir);
+    await finalizeArtifact(distDir, target);
     console.log(`Build completed (copy mode). basePath=${basePath}`);
     return;
   }
@@ -107,8 +129,7 @@ export async function buildProject({ minify = true, mode = process.env.BUILD_MOD
       throw new Error('esbuild is not installed, but BUILD_MODE=bundle was requested.');
     }
     await buildCopy({ srcDir, distDir, basePath, version, commit, localSecretPolicy });
-    await writeSecurityHeaders(distDir);
-    await writeArtifactManifest(distDir);
+    await finalizeArtifact(distDir, target);
     console.log(`Build completed (copy fallback). basePath=${basePath}`);
     return;
   }
@@ -123,9 +144,14 @@ export async function buildProject({ minify = true, mode = process.env.BUILD_MOD
     commit,
     localSecretPolicy,
   });
-  await writeSecurityHeaders(distDir);
-  await writeArtifactManifest(distDir);
+  await finalizeArtifact(distDir, target);
   console.log(`Build completed (bundle mode). basePath=${basePath}`);
+}
+
+async function finalizeArtifact(distDir, target) {
+  // Header-limited previews omit the marker before the final file set is hashed.
+  if (target === 'standalone') await writeSecurityHeaders(distDir);
+  await writeArtifactManifest(distDir);
 }
 
 export function resolveBuildOutputDirectory(variant = process.env.BUILD_VARIANT || '') {

@@ -13,6 +13,9 @@ test('deployment sends required headers and refuses framing', async ({ page, req
   expect(headers['content-security-policy']).toContain("frame-ancestors 'none'");
   expect(headers['content-security-policy']).toContain("connect-src 'none'");
   expect(headers['x-frame-options']).toBe('DENY');
+  expect(headers['x-content-type-options']).toBe('nosniff');
+  expect(headers['strict-transport-security']).toBe('max-age=31536000');
+  expect(headers['cache-control']).toBe('no-cache');
   expect(headers['cross-origin-opener-policy']).toBe('same-origin');
   expect(headers['cross-origin-resource-policy']).toBe('same-origin');
   expect(headers['referrer-policy']).toBe('no-referrer');

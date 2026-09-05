@@ -101,7 +101,7 @@ Supported assumptions:
 ### Install
 
 ```bash
-npm install
+npm ci
 ```
 
 ### Run locally
@@ -134,7 +134,7 @@ GitHub Pages is not an acceptable production secret-key origin: it cannot supply
 3. Keep workflow file `.github/workflows/pages.yml` in `main`.
 4. Run the workflow manually from the `Actions` tab.
 
-The workflow builds `dist/` and deploys it as the Pages artifact.
+The workflow runs the complete release gate and builds `dist/` with `BUILD_TARGET=pages` and `LOCAL_SECRET_POLICY=disabled`. The Pages target omits unsupported header markers before generating the manifest; the exact final upload directory is verified again before upload. A Pages build refuses an enabled local-secret policy.
 
 For production, use a dedicated origin containing no unrelated applications and a host or edge proxy that sets the headers below. Do not accept a production seed until deployed headers and iframe denial have been tested. A meta CSP cannot enforce `frame-ancestors`. The application also refuses to initialize when framed, including on header-limited preview hosts; this is defense in depth and not a substitute for response headers.
 
@@ -143,6 +143,9 @@ Required security headers:
 ```http
 Content-Security-Policy: default-src 'self'; connect-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; require-trusted-types-for 'script'; trusted-types 'none'; frame-ancestors 'none'
 X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+Strict-Transport-Security: max-age=31536000
+Cache-Control: no-cache
 Referrer-Policy: no-referrer
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Resource-Policy: same-origin
@@ -159,7 +162,7 @@ curl -I https://example.invalid/
 
 Confirm the response includes the headers above and that the page cannot be embedded in an iframe.
 
-Builds display the package version and commit identifier, use content-addressed JavaScript filenames, and emit `artifact-manifest.sha256`. `npm run verify:artifact` rejects missing, extra, non-regular, path-unsafe, or digest-mismatched build files. The manifest detects artifact drift but is not an authenticity proof when served from the same origin. Production releases should additionally use signed tags and an out-of-band signed attestation/checksum.
+Builds display the package version and commit identifier, use content-addressed JavaScript filenames, and emit `artifact-manifest.sha256`. The commit comes from CI or the local Git checkout; source archives should set `BUILD_COMMIT` to the full commit ID. `npm run verify:artifact` rejects missing, extra, non-regular, path-unsafe, or digest-mismatched build files. The manifest detects artifact drift but is not an authenticity proof when served from the same origin. Production releases should additionally use signed tags and an out-of-band signed attestation/checksum. Configure HTTPS redirection at the host; HSTS takes effect only after a secure response.
 
 ### Self-test
 
@@ -192,7 +195,7 @@ The Playwright suite runs the deployed bundle in Chromium, Firefox, and WebKit. 
 
 Local-secret support is capability-gated rather than inferred from the browser name. A provider must pass the RFC 8032 startup signing and verification KAT. A provider that fails is not permitted to continue in a reduced cryptographic mode: all application controls are disabled and a visible fatal error is displayed. The browser gate permits this explicit fail-closed outcome for an engine whose provider is non-conformant; Chromium and Firefox are required to complete the full local-secret flow.
 
-For a release candidate, run `npm run check:release`, then follow [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md) and [SECURITY.md](SECURITY.md). Maintainer tag and artifact signatures are intentionally handled as a separate provenance step.
+For a release candidate, run `npm run check:release`, verify that regenerated vectors have no unexplained changes, and verify the exact final package after any transfer. Follow the deployment requirements above and [SECURITY.md](SECURITY.md). Maintainer tag and artifact signatures are handled as a separate provenance step.
 
 ------------
 

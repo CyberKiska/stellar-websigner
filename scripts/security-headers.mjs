@@ -14,6 +14,9 @@ export const HTTP_CSP = `${META_CSP}; frame-ancestors 'none'`;
 export const SECURITY_HEADERS = Object.freeze([
   ['Content-Security-Policy', HTTP_CSP],
   ['X-Frame-Options', 'DENY'],
+  ['X-Content-Type-Options', 'nosniff'],
+  ['Strict-Transport-Security', 'max-age=31536000'],
+  ['Cache-Control', 'no-cache'],
   ['Referrer-Policy', 'no-referrer'],
   ['Cross-Origin-Opener-Policy', 'same-origin'],
   ['Cross-Origin-Resource-Policy', 'same-origin'],

@@ -28,17 +28,24 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Install browser engines
+        run: npx --no-install playwright install --with-deps chromium firefox webkit
+
       - name: Full security and build gate
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+          BUILD_TARGET: pages
           LOCAL_SECRET_POLICY: disabled
-        run: npm run check
+        run: npm run check:release
 
-      - name: Remove unsupported response-header marker
-        run: rm -f dist/_headers
+      - name: Verify vector drift
+        run: git diff --exit-code test-vectors.json
 
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Verify final upload artifact
+        run: npm run verify:artifact
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
