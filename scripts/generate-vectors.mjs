@@ -8,7 +8,7 @@ import { signSep53Message } from '../src/core/sep53.js';
 import { SEP53_CANONICAL_TEST_VECTORS } from '../src/core/sep53-test-vectors.js';
 import { createXdrProofDraft, finalizeXdrProof } from '../src/core/xdr-proof.js';
 import { computeDigests } from '../src/core/hash.js';
-import { TESTNET_NETWORK_PASSPHRASE } from '../src/core/constants.js';
+import { HASH_ALG, MANAGE_DATA_NAME, TESTNET_NETWORK_PASSPHRASE } from '../src/core/constants.js';
 import { derivePublicKeyFromSeed, signBytesWithSeed, signatureHint } from '../src/core/ed25519.js';
 import { decodeEd25519SecretSeed, encodeEd25519PublicKey } from '../src/core/strkey.js';
 import { computeTransactionHash, encodeSignedTxEnvelope } from '../src/core/xdr.js';
@@ -221,11 +221,11 @@ async function buildVectors() {
           sha3_512Hex: walletContext.digests.sha3_512.hex,
         },
         manageData: {
-          entries: draft.boundHashes.map((item) => ({
-            name: item.manageDataName,
-            alg: item.alg,
-            valueHex: item.digestHex,
-          })),
+          entries: [{
+            name: MANAGE_DATA_NAME.MANIFEST_SHA256,
+            alg: HASH_ALG.SHA256,
+            valueHex: bytesToHexLower(draft.manifestDigest),
+          }],
         },
         unsignedXdr: draft.unsignedXdr,
         txHashHex: bytesToHexLower(txHash),
@@ -249,11 +249,11 @@ async function buildVectors() {
           sha3_512Hex: placeholderContext.digests.sha3_512.hex,
         },
         manageData: {
-          entries: placeholderDraft.boundHashes.map((item) => ({
-            name: item.manageDataName,
-            alg: item.alg,
-            valueHex: item.digestHex,
-          })),
+          entries: [{
+            name: MANAGE_DATA_NAME.MANIFEST_SHA256,
+            alg: HASH_ALG.SHA256,
+            valueHex: bytesToHexLower(placeholderDraft.manifestDigest),
+          }],
         },
         unsignedXdr: placeholderDraft.unsignedXdr,
         txHashHex: bytesToHexLower(placeholderTxHash),

@@ -1,6 +1,6 @@
 import { bytesEqual, hexToBytes, utf8ToBytes, wipeBytes } from './bytes.js';
 import { signBytesWithSeed, verifyBytesWithPublic } from './ed25519.js';
-import { sha256, sha3_512 } from './hash.js';
+import { createSha256Stream, sha256, sha3_512 } from './hash.js';
 
 export function assertWebCryptoAvailable(options = {}) {
   const cryptoApi = options.cryptoApi || globalThis.crypto;
@@ -20,12 +20,16 @@ export async function assertHashRuntimeHealth() {
       '10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0'
   );
   try {
-    const [sha256Actual, sha3Actual, sha3Fallback] = await Promise.all([
+    const sha256Stream = createSha256Stream({ nativeThreshold: 0 });
+    sha256Stream.update(message);
+    const [sha256Actual, sha256Fallback, sha3Actual, sha3Fallback] = await Promise.all([
       sha256(message),
+      sha256Stream.finish(),
       sha3_512(message),
       sha3_512(message, { implementation: 'fallback' }),
     ]);
     if (!bytesEqual(sha256Actual, expectedSha256)) throw new Error('SHA-256 startup KAT failed.');
+    if (!bytesEqual(sha256Fallback, expectedSha256)) throw new Error('Bundled SHA-256 startup KAT failed.');
     if (!bytesEqual(sha3Actual, expectedSha3)) throw new Error('SHA3-512 startup provider/fallback KAT failed.');
     if (!bytesEqual(sha3Fallback, expectedSha3)) throw new Error('Bundled SHA3-512 startup KAT failed.');
   } finally {

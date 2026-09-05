@@ -14,7 +14,7 @@ const KEY_PAIR_CHECK_MESSAGE = new Uint8Array([
 
 export async function derivePublicKeyFromSeed(seedBytes, options = {}) {
   assertSeed(seedBytes);
-  const ownedSeed = seedBytes.slice();
+  const ownedSeed = new Uint8Array(seedBytes);
   const subtle = options.subtle || getSubtle();
   try {
     return await derivePublicKeyWithProvider(ownedSeed, subtle);
@@ -63,9 +63,10 @@ export async function generateKeypair(options = {}) {
     if (!bytesEqual(pkcs8.subarray(0, ED25519_PKCS8_PREFIX.length), ED25519_PKCS8_PREFIX)) {
       throw new Error('Unexpected generated Ed25519 PKCS#8 prefix.');
     }
-    const seedBytes = pkcs8.slice(ED25519_PKCS8_PREFIX.length);
     const publicBytes = new Uint8Array(await subtle.exportKey('raw', pair.publicKey));
     assertStrictEd25519PublicKey(publicBytes);
+    // Create the returned secret copy only after all fallible provider checks.
+    const seedBytes = pkcs8.slice(ED25519_PKCS8_PREFIX.length);
     return { seedBytes, publicBytes };
   } finally {
     wipeBytes(pkcs8);
@@ -74,7 +75,7 @@ export async function generateKeypair(options = {}) {
 
 export async function createSigningKeySession(seedBytes, options = {}) {
   assertSeed(seedBytes);
-  const ownedSeed = seedBytes.slice();
+  const ownedSeed = new Uint8Array(seedBytes);
   const subtle = options.subtle || getSubtle();
   try {
     const privateKey = await importSigningPrivateKeyFromSeed(ownedSeed, subtle);
@@ -117,7 +118,7 @@ export async function createSigningKeySession(seedBytes, options = {}) {
 
 export function signatureHint(publicBytes) {
   assertPublic(publicBytes);
-  return publicBytes.slice(28, 32);
+  return new Uint8Array(publicBytes.subarray(28, 32));
 }
 
 async function importSigningPrivateKeyFromSeed(seedBytes, subtle = getSubtle()) {
@@ -214,7 +215,7 @@ function decodeEd25519JwkMember(value, label) {
 
 function copyAndValidatePublicKey(publicBytes) {
   assertPublic(publicBytes);
-  const copy = publicBytes.slice();
+  const copy = new Uint8Array(publicBytes);
   assertStrictEd25519PublicKey(copy);
   return copy;
 }

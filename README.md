@@ -31,7 +31,7 @@ Standardized algorithms and passing tests do not establish formal conformance, a
 
 SEP-53 signs `SHA-256("Stellar Signed Message:\n" || messageBytes)` with Ed25519. This is not Ed25519ph. In schema v3, `messageBytes` is the RFC 8785 serialization of the protected manifest; the manifest contains the detached content digests.
 
-Verification performs provider-independent Ed25519 checks before Web Crypto: canonical point encodings, prime-order subgroup membership for the public key and `R`, rejection of the identity point, and canonical `S < L`. Full subgroup membership is a deliberate acceptance policy stricter than RFC 8032 and common Stellar verification stacks: it can produce a false-negative interoperability result for an unusual mixed-order point, but cannot produce a false-valid result. Policy errors identify the strictness explicitly. Startup known-answer tests exercise SHA-256, both the selected and bundled SHA3-512 paths, and the actual Ed25519 Web Crypto provider.
+Verification performs provider-independent Ed25519 checks before Web Crypto: canonical point encodings, prime-order subgroup membership for the public key and `R`, rejection of the identity point, and canonical `S < L`. Full subgroup membership is a deliberate acceptance policy stricter than RFC 8032 and common Stellar verification stacks: it can produce a false-negative interoperability result for an unusual mixed-order point, but cannot produce a false-valid result. Policy errors identify the strictness explicitly. Startup known-answer tests exercise both native and bundled SHA-256, both the selected and bundled SHA3-512 paths, and the actual Ed25519 Web Crypto provider.
 
 SHA3-512 first probes the proposed WebCrypto `SHA3-512` identifier and falls back to the bundled FIPS 202 implementation only when the provider reports `NotSupportedError`. Other provider failures are fatal. The proposed native identifier is from the unofficial [Modern Algorithms in the Web Cryptography API](https://wicg.github.io/webcrypto-modern-algos/) draft and is not assumed to be universally available.
 
@@ -181,6 +181,8 @@ Covers:
 - exact unsigned-XDR round-trip binding and stale-file-context rejection;
 - malformed/extra XDR signature rejection;
 - strict Ed25519 identity/small-order/canonicality policy.
+
+`npm run test:core` additionally compares both bundled hashes with independent Node/OpenSSL implementations across 266 input sizes (including empty input, padding boundaries, and the 4 MiB SHA-256 transition). It checks the published SEP-53/XDR vectors using independent signing and transaction encoding, adversarial Ed25519 points/scalars, strict container parsing, byte ownership, and complete build packaging. The build tools are pinned in both `package.json` and the lockfile; use `npm ci` for reproducible installation.
 
 ### Production browser security gate
 

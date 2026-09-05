@@ -24,15 +24,24 @@ const hash = (bytes) => createHash('sha256').update(bytes).digest();
 const u32 = (n) => { const bytes = Buffer.alloc(4); bytes.writeUInt32BE(n); return bytes; };
 const opaque = (bytes) => Buffer.concat([u32(bytes.length), bytes, Buffer.alloc((4 - bytes.length % 4) % 4)]);
 
-function signedXdr(name = Buffer.from(MANAGE_DATA_NAME.MANIFEST_SHA256)) {
-  const tx = Buffer.concat([
-    u32(0), publicBytes, u32(8000), Buffer.alloc(8), u32(0), u32(0), u32(1),
-    u32(0), u32(10), opaque(name), u32(1), opaque(draft.manifestDigest), u32(0),
+function transactionBytes(name = Buffer.from(MANAGE_DATA_NAME.MANIFEST_SHA256), {
+  sequence = 0n, fee = 8000, operationType = 10, sourceFlag = 0, memo = 0,
+  precondition = 0, value = draft.manifestDigest, extension = 0,
+} = {}) {
+  const seq = Buffer.alloc(8);
+  seq.writeBigInt64BE(sequence);
+  return Buffer.concat([
+    u32(0), publicBytes, u32(fee), seq, u32(precondition), u32(memo), u32(1),
+    u32(sourceFlag), ...(sourceFlag === 1 ? [u32(0), publicBytes] : []),
+    u32(operationType), opaque(name), u32(1), opaque(value), u32(extension),
   ]);
-  const txHash = hash(Buffer.concat([hash(Buffer.from(TESTNET_NETWORK_PASSPHRASE)), u32(2), tx]));
-  const signature = sign(null, txHash, key);
-  return Buffer.concat([u32(2), tx, u32(1), publicBytes.subarray(28), opaque(signature)]).toString('base64');
 }
+function envelopeBytes(tx, { hint = publicBytes.subarray(28), signature, count = 1, network = TESTNET_NETWORK_PASSPHRASE } = {}) {
+  const txHash = hash(Buffer.concat([hash(Buffer.from(network)), u32(2), tx]));
+  const proof = signature || sign(null, txHash, key);
+  return Buffer.concat([u32(2), tx, u32(count), ...Array.from({ length: count }, () => Buffer.concat([hint, opaque(proof)]))]);
+}
+const signedXdr = (name) => envelopeBytes(transactionBytes(name)).toString('base64');
 const xdrDoc = { schema: 'stellar-signature/v3', signer, protected: draft.protectedManifest, signedXdr: signedXdr() };
 const verify = (signatureDoc, inputContext = context, extra = {}) => verifyDetachedSignature({ signatureDoc, inputContext, expectedSigner: signer, ...extra });
 
@@ -76,6 +85,42 @@ test('genuinely signed XDR names reject BOMs, invalid UTF-8, aliases and old dig
     assert.equal(report.summary, 'INVALID', name.toString('hex'));
     assert.equal(report.signatureValid, false);
     assert.equal(report.inputMatches, null);
+  }
+});
+
+test('independent malformed XDR corpus rejects unsafe semantics, signatures, padding and every truncation', async () => {
+  const tx = transactionBytes();
+  const normalEnvelope = envelopeBytes(tx);
+  const cases = [
+    ['sequence', envelopeBytes(transactionBytes(undefined, { sequence: 1n }))],
+    ['zero fee', envelopeBytes(transactionBytes(undefined, { fee: 0 }))],
+    ['high fee', envelopeBytes(transactionBytes(undefined, { fee: 100001 }))],
+    ['operation source', envelopeBytes(transactionBytes(undefined, { sourceFlag: 1 }))],
+    ['payment', envelopeBytes(transactionBytes(undefined, { operationType: 1 }))],
+    ['memo', envelopeBytes(transactionBytes(undefined, { memo: 1 }))],
+    ['precondition', envelopeBytes(transactionBytes(undefined, { precondition: 1 }))],
+    ['extension', envelopeBytes(transactionBytes(undefined, { extension: 1 }))],
+    ['wrong hint', envelopeBytes(tx, { hint: Buffer.alloc(4) })],
+    ['extra signature', envelopeBytes(tx, { count: 2 })],
+    ['no signature', envelopeBytes(tx, { count: 0 })],
+    ['short signature', envelopeBytes(tx, { signature: Buffer.alloc(63) })],
+    ['wrong network', envelopeBytes(tx, { network: 'synthetic regression network' })],
+    ['wrong digest', envelopeBytes(transactionBytes(undefined, { value: Buffer.alloc(32) }))],
+    ['trailing bytes', Buffer.concat([normalEnvelope, u32(0)])],
+  ];
+  const nonzeroPad = Buffer.from(tx);
+  nonzeroPad[72 + Buffer.byteLength(MANAGE_DATA_NAME.MANIFEST_SHA256)] = 1;
+  cases.push(['padding', envelopeBytes(nonzeroPad)]);
+  const feeBump = Buffer.from(normalEnvelope);
+  feeBump.writeUInt32BE(5, 0);
+  cases.push(['fee bump', feeBump]);
+  for (const [name, bytes] of cases) {
+    const report = await verify({ ...xdrDoc, signedXdr: bytes.toString('base64') });
+    assert.equal(report.summary, 'INVALID', name);
+    assert.equal(report.signatureValid, false, name);
+  }
+  for (let i = 0; i < normalEnvelope.length; i += 1) {
+    assert.throws(() => parseTransactionEnvelope(normalEnvelope.subarray(0, i)), `truncation: ${i}`);
   }
 });
 

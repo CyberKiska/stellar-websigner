@@ -345,7 +345,7 @@ export async function runSelfTest() {
       ];
 
       for (const [name, bytes, expectedHex] of sha256Vectors) {
-        const actualHex = bytesToHexLower(await digestWithChunks(createSha256Stream, bytes, [1, 7, 64, 3]));
+        const actualHex = bytesToHexLower(await digestWithChunks(() => createSha256Stream({ nativeThreshold: 0 }), bytes, [1, 7, 64, 3]));
         if (actualHex !== expectedHex) {
           throw new Error(`SHA-256 stream ${name}: expected ${expectedHex}, got ${actualHex}.`);
         }
@@ -367,7 +367,7 @@ export async function runSelfTest() {
         const chunkSizes = [1 + (i % 17), 31 + (i % 97), 255 + (i % 251), 4096];
 
         const oneShotSha256 = bytesToHexLower(await sha256(bytes));
-        const streamSha256 = bytesToHexLower(await digestWithChunks(createSha256Stream, bytes, chunkSizes));
+        const streamSha256 = bytesToHexLower(await digestWithChunks(() => createSha256Stream({ nativeThreshold: 0 }), bytes, chunkSizes));
         if (streamSha256 !== oneShotSha256) {
           throw new Error(`SHA-256 stream corpus mismatch at size ${size}.`);
         }
