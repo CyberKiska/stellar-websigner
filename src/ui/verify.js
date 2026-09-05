@@ -159,6 +159,7 @@ export function setupVerifyTab(state) {
     if (!activeAbortController) return;
     const controller = activeAbortController;
     controller.abort(makeAbortError());
+    runBtn.textContent = runLabel;
     cancelBtn.disabled = true;
     contextBusy = false;
     clearInputContext();

@@ -188,6 +188,7 @@ export function setupSignTab(state) {
     if (!activeAbortController) return;
     const controller = activeAbortController;
     controller.abort(makeAbortError());
+    localRunBtn.textContent = localRunLabel;
     cancelBtn.disabled = true;
     contextBusy = false;
     clearCurrentInputContext();

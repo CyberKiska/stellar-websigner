@@ -136,12 +136,44 @@ test('an obsolete signature-file read cannot overwrite a newer verification resu
   await page.locator('#verify-text-input').fill('abc');
   await page.locator('#verify-sig-file').setInputFiles({ name: 'current.sig', buffer: Buffer.from(fixture.json), mimeType: 'application/json' });
   await expect(page.locator('#verify-run')).toBeEnabled();
+  await expect(page.locator('#verify-run')).toHaveText('Verify Signature');
   await page.locator('#verify-run').click();
   await expect(page.locator('#verify-result-badge')).toHaveText('VALID');
   await page.evaluate(async () => { window.releaseSignatureRead(); await new Promise((resolve) => setTimeout(resolve, 0)); });
   await expect(page.locator('#verify-result-card')).toBeVisible();
   await expect(page.locator('#verify-result-badge')).toHaveText('VALID');
   await expect(page.locator('#verify-run')).toHaveText('Verify Signature');
+});
+
+test('cancelled provider signing restores the action and cannot publish an obsolete result', async ({ page }) => {
+  await page.locator('#keys-seed-input').fill(seed);
+  await page.locator('#keys-load-seed').click();
+  await expect(page.locator('#sys-status-text')).toHaveText('Signing key active');
+  await page.locator('#nav-sign').click();
+  await page.locator('#sign-mode-text').check();
+  await page.locator('#sign-text-input').fill('abc');
+  await expect(page.locator('#sign-local-run')).toBeEnabled();
+  await page.evaluate(() => {
+    const original = crypto.subtle.sign.bind(crypto.subtle);
+    const gate = new Promise((resolve) => { window.releaseSigning = resolve; });
+    crypto.subtle.sign = async (...args) => {
+      window.signingStarted = true;
+      await gate;
+      return original(...args);
+    };
+  });
+  await page.locator('#sign-local-run').click();
+  await expect.poll(() => page.evaluate(() => window.signingStarted)).toBe(true);
+  await page.locator('#sign-text-input').fill('abd');
+  await expect(page.locator('#sign-sha256-hex')).toHaveValue(sha256('abd'));
+  await expect(page.locator('#sign-local-run')).toBeEnabled();
+  await expect(page.locator('#sign-local-run')).toHaveText('Sign Locally');
+  await page.evaluate(() => window.releaseSigning());
+  await expect(page.locator('#sign-output-json')).toHaveValue('');
+  await expect(page.locator('#sign-download')).toBeDisabled();
+  await page.locator('#sign-local-run').click();
+  await expect(page.locator('#sign-status')).toContainText('Content signature created locally');
+  expect(JSON.parse(await page.locator('#sign-output-json').inputValue()).protected.hashes[0].hex).toBe(sha256('abd'));
 });
 
 test('a missing expected signer produces an explicit unconfirmed identity result', async ({ page }) => {
