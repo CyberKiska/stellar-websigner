@@ -153,6 +153,7 @@ async function assertFileSignVerifyForSize(size) {
   });
   const verify = await verifyDetachedSignature({
     signatureDoc: signResult.doc,
+    expectedSigner: signResult.signer,
     inputContext: fileContext,
   });
 
@@ -778,6 +779,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: textContext,
       });
 
@@ -799,6 +801,7 @@ export async function runSelfTest() {
       const verifyContext = await makeFileContext('renamed-proof.bin', utf8ToBytes('Strict SEP-53 raw file bytes'));
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: verifyContext,
       });
 
@@ -820,7 +823,7 @@ export async function runSelfTest() {
         seedBytes: seed,
         signerAddress: '',
       });
-      const verify = await verifyDetachedSignature({ signatureDoc: signResult.doc, inputContext: verifyingContext });
+      const verify = await verifyDetachedSignature({ signatureDoc: signResult.doc, expectedSigner: signResult.signer, inputContext: verifyingContext });
 
       if (!verify.valid || !verify.signatureValid || !verify.inputMatches || verify.summary !== 'VALID_WITH_WARNINGS') {
         throw new Error(`Expected valid advisory media-type warning, got: ${verify.details.join(' | ')}`);
@@ -951,6 +954,7 @@ export async function runSelfTest() {
       });
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: textContext,
       });
 
@@ -969,6 +973,7 @@ export async function runSelfTest() {
       });
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: fileContext,
       });
 
@@ -1002,6 +1007,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badFileContext,
       });
 
@@ -1079,6 +1085,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badTextContext,
       });
 
@@ -1103,6 +1110,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badFileContext,
       });
 
@@ -1146,6 +1154,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: xdrDoc.doc,
+        expectedSigner: xdrDoc.signer,
         inputContext: fileContext,
       });
 

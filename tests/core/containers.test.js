@@ -6,7 +6,7 @@ import { canonicalJsonStringify } from '../../src/core/canonical-json.js';
 import { createFileInputContext, createTextInputContext } from '../../src/core/input-context.js';
 import { createLocalSep53MessageSignature } from '../../src/core/signing.js';
 import { createXdrProofDraft, finalizeXdrProof } from '../../src/core/xdr-proof.js';
-import { verifyDetachedSignature } from '../../src/core/verify.js';
+import { diagnosticsForDisplay, verifyDetachedSignature } from '../../src/core/verify.js';
 import { encodeEd25519PublicKey } from '../../src/core/strkey.js';
 import { parseTransactionEnvelope } from '../../src/core/xdr.js';
 import { MANAGE_DATA_NAME, TESTNET_NETWORK_PASSPHRASE } from '../../src/core/constants.js';
@@ -39,6 +39,30 @@ const verify = (signatureDoc, inputContext = context, extra = {}) => verifyDetac
 test('independent XDR fixture agrees with the draft and verifies normally', async () => {
   assert.deepEqual(parseTransactionEnvelope(xdrDoc.signedXdr).txXdr, draft.txXdr);
   assert.equal((await verify(xdrDoc)).summary, 'VALID');
+});
+
+test('signer assurance distinguishes absent, matching, malformed and mismatching expectations', async () => {
+  const absent = await verify(local.doc, context, { expectedSigner: '' });
+  assert.equal(absent.signatureValid, true);
+  assert.equal(absent.inputMatches, true);
+  assert.equal(absent.contextMatches, null);
+  assert.equal(absent.valid, false);
+  assert.equal(absent.summary, 'SIGNER_UNCONFIRMED');
+  assert.match(diagnosticsForDisplay(absent), /Expected Signer Matches: NOT SUPPLIED/);
+  assert.equal((await verify(local.doc)).summary, 'VALID');
+  const otherKey = createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), new Uint8Array(32).fill(2)]), format: 'der', type: 'pkcs8' });
+  const otherSigner = encodeEd25519PublicKey(createPublicKey(otherKey).export({ format: 'der', type: 'spki' }).subarray(-32));
+  for (const expectedSigner of ['malformed', [signer], otherSigner]) {
+    const report = await verify(local.doc, context, { expectedSigner });
+    assert.equal(report.signatureValid, true);
+    assert.equal(report.contextMatches, false);
+    assert.equal(report.summary, 'MISMATCH');
+  }
+  const changedInput = await verify(local.doc, await createTextInputContext('abd'), { expectedSigner: '' });
+  assert.equal(changedInput.summary, 'MISMATCH');
+  const invalid = await verify({ ...local.doc, signatureB64: 'AA==' }, context, { expectedSigner: '' });
+  assert.equal(invalid.summary, 'INVALID');
+  assert.match(diagnosticsForDisplay(invalid), /Expected Signer Matches: NOT CHECKED/);
 });
 
 test('genuinely signed XDR names reject BOMs, invalid UTF-8, aliases and old digest names', async () => {

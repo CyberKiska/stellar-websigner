@@ -10,7 +10,7 @@ Verification reports three independent decisions:
 - `inputMatches`: the selected input type, exact basename policy, byte size, SHA-256, and SHA3-512 match the authenticated manifest;
 - `contextMatches`: the authenticated signer matches the verifier's optional expected signer.
 
-Only a result where all three are true is `VALID`. A cryptographically valid signature for a different input or signer is `MISMATCH`, not `INVALID`. Input and context comparisons are not performed until the v3 manifest has been authenticated.
+Only a result where all three are true is `VALID`. If the expected signer is absent, `contextMatches` remains null and a matching content signature is `SIGNER_UNCONFIRMED`; the UI displays `UNCONFIRMED`, never a successful expected-signer match. A cryptographically valid signature for a different input or signer is `MISMATCH`, not `INVALID`. Input and context comparisons are not performed until the v3 manifest has been authenticated.
 
 The browser-reported file media type is retained as authenticated advisory metadata. A media-type difference produces a warning but does not override matching content digests, basename, and size because `File.type` can vary by user agent and operating system.
 

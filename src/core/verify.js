@@ -165,10 +165,13 @@ function validateSigner({ report, signatureDoc }) {
 }
 
 function validateExpectedSigner({ report, expectedSigner, actualSigner }) {
-  const expected = String(expectedSigner || '').trim();
+  if (typeof expectedSigner !== 'string') {
+    report.contextMismatch('Expected signer must be a string.');
+    return;
+  }
+  const expected = expectedSigner.trim();
   if (!expected) {
-    report.ok('No external signer expectation was supplied.');
-    report.markContextMatches();
+    report.warn('No trusted expected signer was supplied. The signature verifies under the document\'s public key; signer identity has not been confirmed.');
     return;
   }
   try {
@@ -238,9 +241,11 @@ function createReport() {
         ? 'INVALID'
         : inputMatches === false || contextMatches === false
           ? 'MISMATCH'
-          : warnings.length > 0
-            ? 'VALID_WITH_WARNINGS'
-            : 'VALID';
+          : contextMatches === null
+            ? 'SIGNER_UNCONFIRMED'
+            : warnings.length > 0
+              ? 'VALID_WITH_WARNINGS'
+              : 'VALID';
       return {
         valid,
         signatureValid,
@@ -276,7 +281,7 @@ export function diagnosticsForDisplay(report) {
     `Result: ${report.summary || (report.valid ? 'VALID' : 'INVALID')}`,
     `Signature Valid: ${report.signatureValid ? 'YES' : 'NO'}`,
     `Selected Input Matches: ${formatCheckState(report.inputMatches)}`,
-    `Expected Signer Matches: ${formatCheckState(report.contextMatches)}`,
+    `Expected Signer Matches: ${report.signatureValid && report.contextMatches === null ? 'NOT SUPPLIED' : formatCheckState(report.contextMatches)}`,
     `Signer: ${report.signer || '-'}`,
     `Schema: ${report.checked?.schema || '-'}`,
     `Proof Type: ${report.checked?.proofType || '-'}`,

@@ -144,6 +144,23 @@ test('an obsolete signature-file read cannot overwrite a newer verification resu
   await expect(page.locator('#verify-run')).toHaveText('Verify Signature');
 });
 
+test('a missing expected signer produces an explicit unconfirmed identity result', async ({ page }) => {
+  await page.locator('#nav-verify').click();
+  await page.locator('#verify-mode-text').check();
+  await page.locator('#verify-text-input').fill('abc');
+  await page.locator('#verify-sig-file').setInputFiles({ name: 'abc.sig', buffer: Buffer.from(fixture.json), mimeType: 'application/json' });
+  await expect(page.locator('#verify-expected-signer')).toHaveValue('');
+  await expect(page.locator('#verify-run')).toBeEnabled();
+  await page.locator('#verify-run').click();
+  await expect(page.locator('#verify-result-badge')).toHaveText('UNCONFIRMED');
+  await expect(page.locator('#verify-result-card')).toHaveClass(/warning/);
+  await expect(page.locator('#verify-details')).toHaveValue(/Expected Signer Matches: NOT SUPPLIED/);
+  await page.locator('#verify-expected-signer').fill(fixture.signer);
+  await expect(page.locator('#verify-result-card')).toBeHidden();
+  await page.locator('#verify-run').click();
+  await expect(page.locator('#verify-result-badge')).toHaveText('VALID');
+});
+
 test('secret inputs clear and remask with or without a loaded signing session', async ({ page }) => {
   await page.locator('#keys-seed-toggle').click();
   await page.locator('#keys-seed-input').fill(seed);

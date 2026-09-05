@@ -12,7 +12,7 @@ Static client-only web app for Stellar (Ed25519) content signatures and XDR proo
 1. Key management: generate/import Ed25519 (Stellar) keys and export public information only.
 2. Sign locally: select file/text, sign a protected manifest through SEP-53, download `.sig`.
 3. Sign with external wallet: generate unsigned XDR proof, sign externally, paste signed XDR, download `.sig`.
-4. Verify: select original input + `.sig`, get `VALID`, `MISMATCH`, or `INVALID` with separated cryptographic, input, and signer-context diagnostics.
+4. Verify: select original input + `.sig`, get `VALID`, `UNCONFIRMED`, `MISMATCH`, or `INVALID` with separated cryptographic, input, and signer-context diagnostics.
 
 ------------
 
@@ -72,7 +72,7 @@ Version 3.0.0 accepts only JSON schema `stellar-signature/v3`. Earlier container
 
 Text mode signs UTF-8 of the textarea DOM value, with no Unicode normalization and with the browser's textarea newline behavior; unpaired UTF-16 surrogates are rejected. Verifiers must supply the same DOM text value. Text is limited to 1 MiB after UTF-8 encoding and is hashed in cooperative, cancellable chunks.
 
-For v3, verification authenticates the canonical protected manifest before using its metadata to compare the selected input or optional expected signer. `signatureValid`, `inputMatches`, and `contextMatches` are reported independently. Only all-three-true is `VALID`; a valid signature for different content, basename, size, or signer context is `MISMATCH`; a failed proof is `INVALID`. Input/context fields are reported as not checked when the signature is invalid.
+For v3, verification authenticates the canonical protected manifest before using its metadata to compare the selected input or optional expected signer. `signatureValid`, `inputMatches`, and `contextMatches` are reported independently. When no expected signer is supplied, `contextMatches` remains null and the result is `SIGNER_UNCONFIRMED` (shown as `UNCONFIRMED`), with an explicit identity warning. A public key supplied by the signature document does not establish trusted signer identity. Only all-three-true is `VALID`; a valid signature for different content, basename, size, or signer context is `MISMATCH`; a failed proof is `INVALID`. Input/context fields are reported as not checked when the signature is invalid.
 
 `File.type` is user-agent metadata rather than content-derived identity. It remains signed for provenance, but a difference at verification is advisory and produces a warning. Exact basename, byte size, SHA-256, and SHA3-512 remain hard input-match requirements.
 

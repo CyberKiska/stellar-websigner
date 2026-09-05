@@ -265,7 +265,7 @@ export function setupVerifyTab(state) {
 
     resultDetails.value = diagnosticsForDisplay(report);
 
-    if (report.signatureValid && (!report.inputMatches || !report.contextMatches)) {
+    if (report.signatureValid && (report.inputMatches === false || report.contextMatches === false)) {
       setResultCardMode('warning');
       resultTitle.textContent = 'Valid Signature, Context Mismatch';
       resultBadge.textContent = 'MISMATCH';
@@ -276,6 +276,17 @@ export function setupVerifyTab(state) {
         report.inputErrors?.[0] ||
         'The signature is cryptographically valid, but it is not valid for the selected input or expected signer.';
       showToast('warning', 'Signature valid; selected verification context does not match.');
+      return;
+    }
+
+    if (report.summary === 'SIGNER_UNCONFIRMED') {
+      setResultCardMode('warning');
+      resultTitle.textContent = 'Signature Valid, Signer Unconfirmed';
+      resultBadge.textContent = 'UNCONFIRMED';
+      resultBadge.className = 'badge warning';
+      resultBadge.setAttribute('aria-label', 'Verification result: signer identity not confirmed');
+      resultMessage.textContent = 'The content matches this signature. Supply an independently trusted expected signer to confirm who signed it.';
+      showToast('warning', 'Content signature verified; signer identity is unconfirmed.');
       return;
     }
 
