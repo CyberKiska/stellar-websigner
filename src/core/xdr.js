@@ -168,7 +168,7 @@ export function assertSafeManageDataEnvelope(parsed, { expectedDataName, expecte
       throw new Error('ManageData operation must include a non-empty value.');
     }
 
-    const dataName = String(op.body?.dataName || '');
+    const dataName = op.body?.dataName;
     assertSupportedManageDataName(dataName);
     if (seenDataNames.has(dataName)) {
       throw new Error(`Duplicate ManageData name in transaction: ${dataName}`);
@@ -449,9 +449,9 @@ function normalizeManageDataEntries({ manageDataEntries, dataName, dataValue }) 
   if (Array.isArray(manageDataEntries)) {
     const seen = new Set();
     return manageDataEntries.map((entry, idx) => {
-      const name = String(entry?.dataName || '').trim();
+      const name = entry?.dataName;
       const value = entry?.dataValue;
-      if (!name || name.length > 64) {
+      if (typeof name !== 'string' || !name || name.length > 64) {
         throw new Error(`ManageData name #${idx + 1} must be 1..64 characters.`);
       }
       if (seen.has(name)) {
@@ -474,8 +474,8 @@ function normalizeManageDataEntries({ manageDataEntries, dataName, dataValue }) 
   }
 
   if (dataName || dataValue) {
-    const name = String(dataName || '').trim();
-    if (!name || name.length > 64) {
+    const name = dataName;
+    if (typeof name !== 'string' || !name || name.length > 64) {
       throw new Error('ManageData name must be 1..64 characters.');
     }
     if (!(dataValue instanceof Uint8Array) || dataValue.length === 0 || dataValue.length > 64) {
@@ -548,7 +548,9 @@ class XdrReader {
   }
 
   readString(maxLength) {
-    return bytesToUtf8(this.readOpaque(maxLength));
+    const bytes = this.readOpaque(maxLength);
+    if (bytes.some((byte) => byte > 0x7f)) throw new Error('XDR proof names must be exact ASCII bytes.');
+    return bytesToUtf8(bytes);
   }
 
   ensureConsumed() {
@@ -559,16 +561,12 @@ class XdrReader {
 }
 
 function assertSupportedManageDataName(name) {
-  if (
-    name !== MANAGE_DATA_NAME.SHA256 &&
-    name !== MANAGE_DATA_NAME.SHA3_512 &&
-    name !== MANAGE_DATA_NAME.MANIFEST_SHA256
-  ) {
+  if (name !== MANAGE_DATA_NAME.MANIFEST_SHA256) {
     throw new Error(`Unsupported ManageData name: ${name}`);
   }
 }
 
 function expectedManageDataLength(name) {
-  if (name === MANAGE_DATA_NAME.SHA256 || name === MANAGE_DATA_NAME.MANIFEST_SHA256) return 32;
-  return 64;
+  assertSupportedManageDataName(name);
+  return 32;
 }

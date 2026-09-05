@@ -6,7 +6,7 @@ function serialize(value, ancestors) {
   if (value === null) return 'null';
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (typeof value === 'string') {
-    assertWellFormedUnicode(value);
+    assertIJsonUnicode(value);
     return JSON.stringify(value);
   }
   if (typeof value === 'number') {
@@ -35,7 +35,7 @@ function serialize(value, ancestors) {
     }
     const members = [];
     for (const key of Object.keys(value).sort()) {
-      assertWellFormedUnicode(key);
+      assertIJsonUnicode(key);
       members.push(`${JSON.stringify(key)}:${serialize(value[key], ancestors)}`);
     }
     return `{${members.join(',')}}`;
@@ -56,6 +56,17 @@ export function assertWellFormedUnicode(value) {
       i += 1;
     } else if (code >= 0xdc00 && code <= 0xdfff) {
       throw new Error('Text contains an unpaired UTF-16 surrogate.');
+    }
+  }
+}
+
+// I-JSON applies stricter character rules than arbitrary UTF-8 message data.
+export function assertIJsonUnicode(text) {
+  assertWellFormedUnicode(text);
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    if ((code >= 0xfdd0 && code <= 0xfdef) || (code & 0xffff) >= 0xfffe) {
+      throw new Error('Text contains a Unicode noncharacter prohibited by I-JSON.');
     }
   }
 }

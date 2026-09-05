@@ -27,6 +27,8 @@ We aim to implement
 * Message signing with Stellar according to [SEP-53](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0053.md), especially its Signing Procedure
 * Detached XDR proof verification according to Stellar transaction hashing/signature rules
 
+Standardized algorithms and passing tests do not establish formal conformance, algorithm validation, or FIPS 140 module validation. No such validation is claimed for this application.
+
 SEP-53 signs `SHA-256("Stellar Signed Message:\n" || messageBytes)` with Ed25519. This is not Ed25519ph. In schema v3, `messageBytes` is the RFC 8785 serialization of the protected manifest; the manifest contains the detached content digests.
 
 Verification performs provider-independent Ed25519 checks before Web Crypto: canonical point encodings, prime-order subgroup membership for the public key and `R`, rejection of the identity point, and canonical `S < L`. Full subgroup membership is a deliberate acceptance policy stricter than RFC 8032 and common Stellar verification stacks: it can produce a false-negative interoperability result for an unusual mixed-order point, but cannot produce a false-valid result. Policy errors identify the strictness explicitly. Startup known-answer tests exercise SHA-256, both the selected and bundled SHA3-512 paths, and the actual Ed25519 Web Crypto provider.
@@ -61,12 +63,12 @@ Key generation uses `subtle.generateKey('Ed25519')` and therefore relies on the 
 
 ### Signature format choice
 
-New signatures use JSON schema `stellar-signature/v3`. Schema v2 remains verification-only compatibility and is reported with a warning because it authenticates content bytes/digests, not its surrounding metadata. Version 2 was deprecated on 2026-08-01 and is scheduled for removal in v3.0.0, no earlier than 2027-08-01.
+Version 3.0.0 accepts only JSON schema `stellar-signature/v3`. Earlier containers are rejected; unsigned-metadata legacy verification has been removed.
 
 - `protected` binds application, format version, purpose, signer, proof profile, exact input role/name/size, advisory browser media metadata, and exactly SHA-256 plus SHA3-512;
 - protected bytes use RFC 8785 canonical JSON and reject non-I-JSON strings/numbers;
-- JSON parsing rejects duplicate members, excessive size/depth, unknown fields, and missing fields;
-- binary fields require canonical padded RFC 4648 Base64.
+- JSON files require valid UTF-8 without a BOM; parsing rejects duplicate members, noncharacters, excessive size/depth, unknown fields, missing fields, and incorrect field types;
+- binary fields require strings containing canonical padded RFC 4648 Base64; arrays and other coercible values are rejected.
 
 Text mode signs UTF-8 of the textarea DOM value, with no Unicode normalization and with the browser's textarea newline behavior; unpaired UTF-16 surrogates are rejected. Verifiers must supply the same DOM text value. Text is limited to 1 MiB after UTF-8 encoding and is hashed in cooperative, cancellable chunks.
 

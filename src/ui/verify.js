@@ -6,7 +6,7 @@ import {
 } from '../core/input-context.js';
 import { safeJsonParse, wipeBytes } from '../core/bytes.js';
 import { decodeEd25519PublicKey } from '../core/strkey.js';
-import { diagnosticsForDisplay, signatureDocRequiresInputBytes, verifyDetachedSignature } from '../core/verify.js';
+import { diagnosticsForDisplay, verifyDetachedSignature } from '../core/verify.js';
 import { byId, appendLog, copyText, friendlyError, readFileText, showToast } from './common.js';
 
 export function setupVerifyTab(state) {
@@ -185,7 +185,7 @@ export function setupVerifyTab(state) {
     }
   }
 
-  async function buildInputContext({ strict = false, requireBytes = false, signal = null } = {}) {
+  async function buildInputContext({ strict = false, signal = null } = {}) {
     throwIfAborted(signal);
     if (getMode() === 'file') {
       const file = selectedFile();
@@ -193,7 +193,7 @@ export function setupVerifyTab(state) {
         if (strict) throw new Error('Select original file for verification.');
         return null;
       }
-      const context = await createFileInputContext(file, { keepBytes: requireBytes, onProgress: setProgress, signal });
+      const context = await createFileInputContext(file, { keepBytes: false, onProgress: setProgress, signal });
       throwIfAborted(signal);
       return context;
     }
@@ -203,7 +203,7 @@ export function setupVerifyTab(state) {
       if (strict) throw new Error('Enter original plain text for verification.');
       return null;
     }
-    return createTextInputContext(text, { keepBytes: requireBytes, signal });
+    return createTextInputContext(text, { keepBytes: false, signal });
   }
 
   async function refreshDigestContext({ strict = false, signal = null, silent = false } = {}) {
@@ -215,7 +215,7 @@ export function setupVerifyTab(state) {
       updateRunAvailability();
     }
     try {
-      const context = await buildInputContext({ strict, requireBytes: false, signal: opSignal });
+      const context = await buildInputContext({ strict, signal: opSignal });
       if (nonce !== refreshNonce) return null;
       clearInputContext();
       state.verify.inputContext = context;
@@ -398,10 +398,7 @@ export function setupVerifyTab(state) {
       setProgress({ phase: 'start', message: 'Preparing verification...' });
       const signatureDoc = await readSignatureDoc();
       throwIfAborted(controller.signal);
-      const requiresBytes = signatureDocRequiresInputBytes(signatureDoc);
-      operationContext = requiresBytes
-        ? await buildInputContext({ strict: true, requireBytes: true, signal: controller.signal })
-        : await refreshDigestContext({ strict: true, signal: controller.signal });
+      operationContext = await refreshDigestContext({ strict: true, signal: controller.signal });
       if (!operationContext) throw makeAbortError();
       throwIfAborted(controller.signal);
 

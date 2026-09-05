@@ -1,6 +1,6 @@
 {
   "name": "stellar-websigner",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "description": "Static client-only Stellar (Ed25519) signer and verifier",
@@ -12,10 +12,11 @@
     "build": "node scripts/build.mjs",
     "bench": "node scripts/bench.mjs",
     "selftest": "node scripts/selftest.mjs",
+    "test:core": "node --test tests/core/*.test.js",
     "vectors": "node scripts/generate-vectors.mjs",
     "verify:artifact": "node scripts/verify-artifact-manifest.mjs",
     "test:browser": "playwright test",
-    "check": "npm run selftest && npm run vectors && npm run build && npm run verify:artifact",
+    "check": "npm run selftest && npm run test:core && npm run vectors && npm run build && npm run verify:artifact",
     "check:production": "npm run check && npm run test:browser",
     "check:release": "npm run check:production && npm audit --audit-level=high"
   },

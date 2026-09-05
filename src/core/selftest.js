@@ -20,7 +20,7 @@ import { assertStrictEd25519PublicKey, assertStrictEd25519Signature } from './ed
 import { canonicalJsonStringify } from './canonical-json.js';
 import { assertTopLevelBrowsingContext, localSecretOperationsAllowed } from './deployment-policy.js';
 import { computeDigests, createSha256Stream, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
-import { HASH_ALG, MANAGE_DATA_NAME, PAYLOAD_TYPE, PROOF_TYPE, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
+import { HASH_ALG, MANAGE_DATA_NAME, PROOF_TYPE, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
 import {
   createFileInputContext,
@@ -786,39 +786,6 @@ export async function runSelfTest() {
       }
     }),
 
-    createResult('v2 content-only compatibility is explicit and warning-labeled', async () => {
-      const seed = hexToBytes('1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30');
-      const context = await makeTextContext('legacy content-only payload');
-      const publicBytes = await derivePublicKeyFromSeed(seed);
-      const signer = encodeEd25519PublicKey(publicBytes);
-      const signed = await signSep53Message({ seedBytes: seed, messageBytes: context.bytes });
-      const doc = {
-        schema: SIGNATURE_SCHEMA_V2,
-        signer,
-        proofType: PROOF_TYPE.SEP53_MESSAGE,
-        payloadType: PAYLOAD_TYPE.RAW_BYTES,
-        signatureScheme: SIGNATURE_SCHEME.SEP53_SHA256_ED25519,
-        input: { type: 'text', size: context.fileSize },
-        hashes: [
-          { alg: HASH_ALG.SHA256, hex: context.digests.sha256.hex },
-          { alg: HASH_ALG.SHA3_512, hex: context.digests.sha3_512.hex },
-        ],
-        signatureB64: signed.signatureB64,
-      };
-      const verify = await verifyDetachedSignature({ signatureDoc: doc, inputContext: context });
-      if (!verify.valid || !verify.warnings.some((line) => line.includes('Legacy v2 compatibility'))) {
-        throw new Error(`Expected valid warning-labeled v2 compatibility result: ${verify.details.join(' | ')}`);
-      }
-      const smuggled = {
-        ...doc,
-        hashes: [{ ...doc.hashes[0], ignored: true }, doc.hashes[1]],
-      };
-      const rejected = await verifyDetachedSignature({ signatureDoc: smuggled, inputContext: context });
-      if (rejected.valid || !rejected.errors.some((line) => line.includes('missing or unknown fields'))) {
-        throw new Error(`Expected unknown legacy hash field rejection: ${rejected.details.join(' | ')}`);
-      }
-    }),
-
     createResult('v3 protected manifest binds exact filename', async () => {
       const seed = hexToBytes('1313131313131313131313131313131313131313131313131313131313131313');
       const fileContext = await makeFileContext('proof.bin', utf8ToBytes('Strict SEP-53 raw file bytes'));
@@ -946,7 +913,7 @@ export async function runSelfTest() {
       if (verify.summary !== 'INVALID') throw new Error(`Expected INVALID, got ${verify.summary}.`);
     }),
 
-    ...['', 'stellar-signature/v1', 'stellar-signature/v2 ', 'STELLAR-SIGNATURE/V2'].map((schema) =>
+    ...['', 'stellar-signature/v1', 'stellar-signature/v2', 'stellar-signature/v2 ', 'STELLAR-SIGNATURE/V2'].map((schema) =>
       createResult(`strict verifier rejects schema ${JSON.stringify(schema)}`, async () => {
         const { doc, inputContext } = await makeSignedTextFixture('schema strictness regression');
         const verify = await verifyDetachedSignature({

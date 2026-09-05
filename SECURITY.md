@@ -2,7 +2,7 @@
 
 ## Supported formats and assurance
 
-`stellar-signature/v3` is the production signature format. Verification-only support for `stellar-signature/v2` was deprecated on 2026-08-01 and is scheduled for removal in v3.0.0, no earlier than 2027-08-01. Version 2 authenticates content bytes or digests but does not authenticate all surrounding metadata.
+Version 3.0.0 signs and verifies only `stellar-signature/v3`. Earlier signature containers are unsupported and rejected because they do not authenticate all surrounding metadata.
 
 Verification reports three independent decisions:
 
