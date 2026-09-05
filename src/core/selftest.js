@@ -20,7 +20,7 @@ import { assertStrictEd25519PublicKey, assertStrictEd25519Signature } from './ed
 import { canonicalJsonStringify } from './canonical-json.js';
 import { assertTopLevelBrowsingContext, localSecretOperationsAllowed } from './deployment-policy.js';
 import { computeDigests, createSha256Stream, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
-import { HASH_ALG, MANAGE_DATA_NAME, PAYLOAD_TYPE, PROOF_TYPE, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
+import { HASH_ALG, MANAGE_DATA_NAME, PROOF_TYPE, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
 import {
   createFileInputContext,
@@ -153,6 +153,7 @@ async function assertFileSignVerifyForSize(size) {
   });
   const verify = await verifyDetachedSignature({
     signatureDoc: signResult.doc,
+    expectedSigner: signResult.signer,
     inputContext: fileContext,
   });
 
@@ -344,7 +345,7 @@ export async function runSelfTest() {
       ];
 
       for (const [name, bytes, expectedHex] of sha256Vectors) {
-        const actualHex = bytesToHexLower(await digestWithChunks(createSha256Stream, bytes, [1, 7, 64, 3]));
+        const actualHex = bytesToHexLower(await digestWithChunks(() => createSha256Stream({ nativeThreshold: 0 }), bytes, [1, 7, 64, 3]));
         if (actualHex !== expectedHex) {
           throw new Error(`SHA-256 stream ${name}: expected ${expectedHex}, got ${actualHex}.`);
         }
@@ -366,7 +367,7 @@ export async function runSelfTest() {
         const chunkSizes = [1 + (i % 17), 31 + (i % 97), 255 + (i % 251), 4096];
 
         const oneShotSha256 = bytesToHexLower(await sha256(bytes));
-        const streamSha256 = bytesToHexLower(await digestWithChunks(createSha256Stream, bytes, chunkSizes));
+        const streamSha256 = bytesToHexLower(await digestWithChunks(() => createSha256Stream({ nativeThreshold: 0 }), bytes, chunkSizes));
         if (streamSha256 !== oneShotSha256) {
           throw new Error(`SHA-256 stream corpus mismatch at size ${size}.`);
         }
@@ -778,44 +779,12 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: textContext,
       });
 
       if (!verify.valid) {
         throw new Error(`Expected VALID, got ${verify.summary}`);
-      }
-    }),
-
-    createResult('v2 content-only compatibility is explicit and warning-labeled', async () => {
-      const seed = hexToBytes('1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30');
-      const context = await makeTextContext('legacy content-only payload');
-      const publicBytes = await derivePublicKeyFromSeed(seed);
-      const signer = encodeEd25519PublicKey(publicBytes);
-      const signed = await signSep53Message({ seedBytes: seed, messageBytes: context.bytes });
-      const doc = {
-        schema: SIGNATURE_SCHEMA_V2,
-        signer,
-        proofType: PROOF_TYPE.SEP53_MESSAGE,
-        payloadType: PAYLOAD_TYPE.RAW_BYTES,
-        signatureScheme: SIGNATURE_SCHEME.SEP53_SHA256_ED25519,
-        input: { type: 'text', size: context.fileSize },
-        hashes: [
-          { alg: HASH_ALG.SHA256, hex: context.digests.sha256.hex },
-          { alg: HASH_ALG.SHA3_512, hex: context.digests.sha3_512.hex },
-        ],
-        signatureB64: signed.signatureB64,
-      };
-      const verify = await verifyDetachedSignature({ signatureDoc: doc, inputContext: context });
-      if (!verify.valid || !verify.warnings.some((line) => line.includes('Legacy v2 compatibility'))) {
-        throw new Error(`Expected valid warning-labeled v2 compatibility result: ${verify.details.join(' | ')}`);
-      }
-      const smuggled = {
-        ...doc,
-        hashes: [{ ...doc.hashes[0], ignored: true }, doc.hashes[1]],
-      };
-      const rejected = await verifyDetachedSignature({ signatureDoc: smuggled, inputContext: context });
-      if (rejected.valid || !rejected.errors.some((line) => line.includes('missing or unknown fields'))) {
-        throw new Error(`Expected unknown legacy hash field rejection: ${rejected.details.join(' | ')}`);
       }
     }),
 
@@ -832,6 +801,7 @@ export async function runSelfTest() {
       const verifyContext = await makeFileContext('renamed-proof.bin', utf8ToBytes('Strict SEP-53 raw file bytes'));
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: verifyContext,
       });
 
@@ -853,7 +823,7 @@ export async function runSelfTest() {
         seedBytes: seed,
         signerAddress: '',
       });
-      const verify = await verifyDetachedSignature({ signatureDoc: signResult.doc, inputContext: verifyingContext });
+      const verify = await verifyDetachedSignature({ signatureDoc: signResult.doc, expectedSigner: signResult.signer, inputContext: verifyingContext });
 
       if (!verify.valid || !verify.signatureValid || !verify.inputMatches || verify.summary !== 'VALID_WITH_WARNINGS') {
         throw new Error(`Expected valid advisory media-type warning, got: ${verify.details.join(' | ')}`);
@@ -946,7 +916,7 @@ export async function runSelfTest() {
       if (verify.summary !== 'INVALID') throw new Error(`Expected INVALID, got ${verify.summary}.`);
     }),
 
-    ...['', 'stellar-signature/v1', 'stellar-signature/v2 ', 'STELLAR-SIGNATURE/V2'].map((schema) =>
+    ...['', 'stellar-signature/v1', 'stellar-signature/v2', 'stellar-signature/v2 ', 'STELLAR-SIGNATURE/V2'].map((schema) =>
       createResult(`strict verifier rejects schema ${JSON.stringify(schema)}`, async () => {
         const { doc, inputContext } = await makeSignedTextFixture('schema strictness regression');
         const verify = await verifyDetachedSignature({
@@ -984,6 +954,7 @@ export async function runSelfTest() {
       });
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: textContext,
       });
 
@@ -1002,6 +973,7 @@ export async function runSelfTest() {
       });
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: fileContext,
       });
 
@@ -1035,6 +1007,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badFileContext,
       });
 
@@ -1112,6 +1085,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badTextContext,
       });
 
@@ -1136,6 +1110,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badFileContext,
       });
 
@@ -1179,6 +1154,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: xdrDoc.doc,
+        expectedSigner: xdrDoc.signer,
         inputContext: fileContext,
       });
 

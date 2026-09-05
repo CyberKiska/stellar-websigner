@@ -1,3 +1,5 @@
+import { bytesToUtf8, wipeBytes } from '../core/bytes.js';
+
 export function byId(id) {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing element #${id}`);
@@ -66,7 +68,15 @@ export async function readFileText(file, { maxBytes = 256 * 1024 } = {}) {
   if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > maxBytes) {
     throw new Error(`File exceeds the ${maxBytes}-byte limit.`);
   }
-  return file.text();
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  try {
+    if (bytes.length !== file.size || bytes.length > maxBytes) {
+      throw new Error('Signature file size changed while reading.');
+    }
+    return bytesToUtf8(bytes);
+  } finally {
+    wipeBytes(bytes);
+  }
 }
 
 export function appendLog(textarea, message) {

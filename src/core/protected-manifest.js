@@ -105,8 +105,8 @@ export function validateProtectedManifestStructure({ manifest, expectedProofType
   if (expectedProofType === PROOF_TYPE.XDR_ENVELOPE) {
     assertPlainObject(manifest.network, 'protected.network');
     assertExactKeys(manifest.network, ['passphrase', 'hint'], 'protected.network');
-    const passphrase = String(manifest.network.passphrase || '');
-    if (!passphrase || passphrase !== passphrase.trim() || passphrase.length > 255) {
+    const passphrase = manifest.network.passphrase;
+    if (typeof passphrase !== 'string' || !passphrase || passphrase !== passphrase.trim() || passphrase.length > 255) {
       throw new Error('Protected network passphrase is invalid.');
     }
     if (manifest.network.hint !== networkHintFromPassphrase(passphrase)) {
@@ -210,7 +210,8 @@ function normalizedMediaType(inputContext) {
 }
 
 export function validateFileName(name) {
-  const value = String(name || '');
+  if (typeof name !== 'string') throw new Error('Protected filename must be a string.');
+  const value = name;
   if (!value || value.length > 255 || value === '.' || value === '..' || /[\\/\u0000]/.test(value)) {
     throw new Error('Protected filename must be a safe basename of 1..255 characters.');
   }

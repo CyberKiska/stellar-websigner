@@ -93,7 +93,8 @@ export function createSha256Stream(options = {}) {
       : SHA256_NATIVE_THRESHOLD_BYTES;
   let chunks = [];
   let bufferedLength = 0;
-  let streaming = null;
+  // A zero threshold explicitly selects the bundled backend, including empty input.
+  let streaming = nativeThreshold === 0 ? createSha256StreamingState() : null;
   let finished = false;
 
   function switchToStreaming() {
@@ -120,7 +121,7 @@ export function createSha256Stream(options = {}) {
 
       const nextLength = bufferedLength + chunk.length;
       if (nextLength <= nativeThreshold) {
-        chunks.push(chunk.slice());
+        chunks.push(new Uint8Array(chunk));
         bufferedLength = nextLength;
         return;
       }

@@ -52,51 +52,27 @@ async function main() {
   const iterations = parsePositiveInt(process.argv[3], 8);
   const input = new Uint8Array(SHA3_512_RATE_BYTES * blocks).fill(0x41);
 
-  await withForcedSha3Fallback(async () => {
-    const currentHex = bytesToHexLower(await sha3_512(input));
-    const legacyHex = bytesToHexLower(sha3_512_bigint(input));
-    if (currentHex !== legacyHex) {
-      throw new Error('Uint32 and legacy BigInt SHA3-512 digests differ.');
-    }
-
-    await sha3_512(input);
-    sha3_512_bigint(input);
-
-    const uint32Ms = await timeAsync(iterations, () => sha3_512(input));
-    const bigintMs = timeSync(iterations, () => sha3_512_bigint(input));
-    const speedup = bigintMs / uint32Ms;
-    const mib = (input.length * iterations) / 1024 / 1024;
-
-    console.log('SHA3-512 fallback benchmark');
-    console.log(`Input: ${input.length} bytes (${SHA3_512_RATE_BYTES} x ${blocks} ASCII "A" blocks)`);
-    console.log(`Iterations: ${iterations}`);
-    console.log(`Digest: ${currentHex}`);
-    console.log(`Uint32 hi/lo lanes: ${uint32Ms.toFixed(2)} ms (${(mib / (uint32Ms / 1000)).toFixed(2)} MiB/s)`);
-    console.log(`Legacy BigInt lanes: ${bigintMs.toFixed(2)} ms (${(mib / (bigintMs / 1000)).toFixed(2)} MiB/s)`);
-    console.log(`Speedup: ${speedup.toFixed(2)}x`);
-  });
-}
-
-async function withForcedSha3Fallback(fn) {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle?.digest) {
-    throw new Error('WebCrypto subtle API is unavailable.');
+  const currentHex = bytesToHexLower(await sha3_512(input, { implementation: 'fallback' }));
+  const legacyHex = bytesToHexLower(sha3_512_bigint(input));
+  if (currentHex !== legacyHex) {
+    throw new Error('Uint32 and reference BigInt SHA3-512 digests differ.');
   }
 
-  const originalDigest = subtle.digest;
-  subtle.digest = function digestWithForcedSha3Fallback(algorithm, data) {
-    const name = typeof algorithm === 'string' ? algorithm : algorithm?.name;
-    if (String(name).toUpperCase() === 'SHA-3-512') {
-      return Promise.reject(new Error('forced SHA3-512 fallback'));
-    }
-    return originalDigest.call(this, algorithm, data);
-  };
+  await sha3_512(input, { implementation: 'fallback' });
+  sha3_512_bigint(input);
 
-  try {
-    return await fn();
-  } finally {
-    subtle.digest = originalDigest;
-  }
+  const uint32Ms = await timeAsync(iterations, () => sha3_512(input, { implementation: 'fallback' }));
+  const bigintMs = timeSync(iterations, () => sha3_512_bigint(input));
+  const speedup = bigintMs / uint32Ms;
+  const mib = (input.length * iterations) / 1024 / 1024;
+
+  console.log('SHA3-512 fallback benchmark');
+  console.log(`Input: ${input.length} bytes (${SHA3_512_RATE_BYTES} x ${blocks} ASCII "A" blocks)`);
+  console.log(`Iterations: ${iterations}`);
+  console.log(`Digest: ${currentHex}`);
+  console.log(`Uint32 hi/lo lanes: ${uint32Ms.toFixed(2)} ms (${(mib / (uint32Ms / 1000)).toFixed(2)} MiB/s)`);
+  console.log(`Reference BigInt lanes: ${bigintMs.toFixed(2)} ms (${(mib / (bigintMs / 1000)).toFixed(2)} MiB/s)`);
+  console.log(`Speedup: ${speedup.toFixed(2)}x`);
 }
 
 async function timeAsync(iterations, fn) {

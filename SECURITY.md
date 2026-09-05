@@ -2,7 +2,7 @@
 
 ## Supported formats and assurance
 
-`stellar-signature/v3` is the production signature format. Verification-only support for `stellar-signature/v2` was deprecated on 2026-08-01 and is scheduled for removal in v3.0.0, no earlier than 2027-08-01. Version 2 authenticates content bytes or digests but does not authenticate all surrounding metadata.
+Version 3.0.0 signs and verifies only `stellar-signature/v3`. Earlier signature containers are unsupported and rejected because they do not authenticate all surrounding metadata.
 
 Verification reports three independent decisions:
 
@@ -10,7 +10,7 @@ Verification reports three independent decisions:
 - `inputMatches`: the selected input type, exact basename policy, byte size, SHA-256, and SHA3-512 match the authenticated manifest;
 - `contextMatches`: the authenticated signer matches the verifier's optional expected signer.
 
-Only a result where all three are true is `VALID`. A cryptographically valid signature for a different input or signer is `MISMATCH`, not `INVALID`. Input and context comparisons are not performed until the v3 manifest has been authenticated.
+Only a result where all three are true is `VALID`. If the expected signer is absent, `contextMatches` remains null and a matching content signature is `SIGNER_UNCONFIRMED`; the UI displays `UNCONFIRMED`, never a successful expected-signer match. A cryptographically valid signature for a different input or signer is `MISMATCH`, not `INVALID`. Input and context comparisons are not performed until the v3 manifest has been authenticated.
 
 The browser-reported file media type is retained as authenticated advisory metadata. A media-type difference produces a warning but does not override matching content digests, basename, and size because `File.type` can vary by user agent and operating system.
 
@@ -26,7 +26,7 @@ The local-secret threat model does not include a compromised browser, extension,
 
 ## Release security gate
 
-Run `npm run check:release` with all pinned Playwright browsers installed. This covers self-tests and startup KATs, vectors, the production build, artifact-manifest verification, browser security behavior, and dependency audit. Follow `RELEASE-CHECKLIST.md` for deployment checks.
+Run `npm run check:release` with all pinned Playwright browsers installed. This covers self-tests and startup KATs, independent core regressions, vectors, the production build, artifact-manifest verification, browser security behavior, and dependency audit. Verify the exact upload package again after packaging or transfer, and check the deployed headers and iframe denial before enabling local secrets.
 
 `artifact-manifest.sha256` detects accidental or unauthorized drift only when its expected value is obtained through an independent trusted channel. It is not an authenticity proof when downloaded from the same potentially compromised origin. Maintainer-signed tags and out-of-band signed release attestations remain a separate release provenance step.
 

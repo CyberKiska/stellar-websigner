@@ -69,7 +69,7 @@ export async function finalizeXdrProof({ inputContext, signedXdr, draft, expecte
   if (!signer || signer !== draft.signerAddress) {
     throw new Error('Active signer does not match the original XDR draft.');
   }
-  if (!String(signedXdr || '').trim()) throw new Error('Paste signed XDR first.');
+  if (typeof signedXdr !== 'string' || !signedXdr) throw new Error('Signed XDR must be a Base64 string.');
 
   const currentManifest = buildProtectedManifest({
     inputContext,
@@ -86,7 +86,7 @@ export async function finalizeXdrProof({ inputContext, signedXdr, draft, expecte
     throw new Error('Protected manifest digest changed after the unsigned XDR was generated.');
   }
 
-  const parsed = parseTransactionEnvelope(String(signedXdr).trim());
+  const parsed = parseTransactionEnvelope(signedXdr);
   if (!bytesEqual(parsed.txXdr, draft.txXdr)) {
     throw new Error('Signed XDR transaction differs from the exact unsigned draft.');
   }

@@ -173,10 +173,9 @@
       "manageData": {
         "entries": [
           {
-            "alg": "SHA-256"
-          },
-          {
-            "alg": "SHA3-512"
+            "name": "org.stellar-websigner.manifest.sha256",
+            "alg": "SHA-256",
+            "valueHex": "106539e60a7ff452e82a67c05641ab38c55152174d451322a7e1de61ccb8eb8f"
           }
         ]
       },
@@ -238,10 +237,9 @@
       "manageData": {
         "entries": [
           {
-            "alg": "SHA-256"
-          },
-          {
-            "alg": "SHA3-512"
+            "name": "org.stellar-websigner.manifest.sha256",
+            "alg": "SHA-256",
+            "valueHex": "cd9269c6f14659884095930b40831551a48964749914b9ae4cee9c0fd717536c"
           }
         ]
       },
