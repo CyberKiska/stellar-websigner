@@ -17,7 +17,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'npm run dev',
+      command: 'npm run preview',
       env: {
         ...process.env,
         BUILD_MODE: 'bundle',
@@ -32,7 +32,7 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: 'npm run dev',
+      command: 'npm run preview',
       env: {
         ...process.env,
         BUILD_MODE: 'bundle',

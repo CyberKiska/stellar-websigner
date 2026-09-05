@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "preview": "node scripts/dev.mjs --production",
     "build": "node scripts/build.mjs",
     "bench": "node scripts/bench.mjs",
     "selftest": "node scripts/selftest.mjs",

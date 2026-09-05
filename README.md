@@ -112,6 +112,8 @@ npm run dev
 
 Open: `http://localhost:5173`
 
+Use `npm run preview` to build, verify, and serve the minified production artifact on loopback without file watching. The browser security gate uses this mode for both local-secret policies.
+
 ### Build
 
 ```bash

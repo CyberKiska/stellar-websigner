@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildProject, resolveBuildOutputDirectory } from './build.mjs';
 import { SECURITY_HEADERS } from './security-headers.mjs';
+import { verifyArtifactManifest } from './verify-artifact-manifest.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +14,7 @@ const srcDir = path.join(root, 'src');
 const distDir = resolveBuildOutputDirectory();
 const port = Number(process.env.PORT || 5173);
 const securityHeaders = Object.fromEntries(SECURITY_HEADERS);
+const productionPreview = process.argv.includes('--production');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -55,13 +57,14 @@ export function resolveSafeFilePath(urlPath, rootDirectory) {
 
 async function runBuild() {
   await buildProject({
-    minify: false,
+    minify: productionPreview,
     mode: process.env.BUILD_MODE || 'auto',
   });
 }
 
 async function main() {
   await runBuild();
+  if (productionPreview) await verifyArtifactManifest(distDir);
 
   const server = createServer(async (req, res) => {
     try {
@@ -75,9 +78,11 @@ async function main() {
   });
 
   server.listen(port, '127.0.0.1', () => {
-    console.log(`Dev server: http://localhost:${port}`);
+    console.log(`${productionPreview ? 'Production preview' : 'Dev server'}: http://localhost:${port}`);
   });
 
+  // Release tests must use one verified, minified artifact throughout a run.
+  if (productionPreview) return;
   let timer = null;
   watch(srcDir, { recursive: true }, () => {
     clearTimeout(timer);
