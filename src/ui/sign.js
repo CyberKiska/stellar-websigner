@@ -1,6 +1,7 @@
 import { registerSessionWipeHandler } from '../app/session-wipe.js';
 import { base64ToBytes, wipeBytes } from '../core/bytes.js';
-import { PUBLIC_NETWORK_PASSPHRASE } from '../core/constants.js';
+import { PROOF_TYPE, PUBLIC_NETWORK_PASSPHRASE } from '../core/constants.js';
+import { buildProtectedManifest, compareProtectedManifestInput } from '../core/protected-manifest.js';
 import {
   createFileInputContext,
   createTextInputContext,
@@ -38,6 +39,7 @@ export function setupSignTab(state) {
   const cancelBtn = byId('sign-cancel');
 
   const localRunBtn = byId('sign-local-run');
+  const localRunLabel = localRunBtn.textContent;
   const localPanelEl = byId('sign-local-panel');
   const xdrPanelEl = byId('sign-xdr-panel');
   const xdrGenerateBtn = byId('sign-xdr-generate');
@@ -116,6 +118,7 @@ export function setupSignTab(state) {
     outputSignatureEl.value = '';
     outputJsonEl.value = '';
     downloadBtn.disabled = true;
+    setStatusBox(statusEl, 'neutral', 'No signature created for the current input.');
   }
 
   function resetXdrDraft() {
@@ -363,10 +366,26 @@ export function setupSignTab(state) {
       return;
     }
 
+    const reviewedContext = state.sign.inputContext;
+    if (!reviewedContext) throw new Error('Prepare and review the input before signing.');
+    const reviewedManifest = buildProtectedManifest({
+      inputContext: reviewedContext,
+      signer: state.keys.signerAddress,
+      proofType: PROOF_TYPE.SEP53_MESSAGE,
+    });
+
     let context = null;
     try {
       context = await buildInputContext({ strict: true, requireBytes: false, signal });
       throwIfAborted(signal);
+      const comparison = compareProtectedManifestInput({ manifest: reviewedManifest, inputContext: context });
+      if (!comparison.matches || comparison.warnings.length > 0) {
+        clearCurrentInputContext();
+        resetXdrDraft();
+        state.sign.inputContext = context;
+        renderDigests(context);
+        throw new Error('Input changed since the displayed digests were prepared. Review the updated digests and sign again.');
+      }
       setHashProgress({
         phase: 'digest',
         loaded: context.fileSize,
@@ -533,7 +552,7 @@ export function setupSignTab(state) {
   });
 
   localRunBtn.addEventListener('click', async () => {
-    const previousLabel = localRunBtn.textContent;
+    resetOutput();
     const controller = beginAbortableOperation();
     contextBusy = true;
     updateActionAvailability();
@@ -541,6 +560,7 @@ export function setupSignTab(state) {
     try {
       await runLocalSign(controller.signal);
     } catch (err) {
+      if (activeAbortController !== controller) return;
       if (isAbortError(err)) {
         resetOutput();
         setStatusBox(statusEl, 'neutral', 'Signing cancelled.');
@@ -553,11 +573,13 @@ export function setupSignTab(state) {
       appendLog(logEl, `Local signing failed: ${msg}`);
       showToast('error', msg);
     } finally {
-      contextBusy = false;
-      finishAbortableOperation(controller);
-      resetHashProgress();
-      localRunBtn.textContent = previousLabel;
-      updateActionAvailability();
+      if (activeAbortController === controller) {
+        contextBusy = false;
+        finishAbortableOperation(controller);
+        resetHashProgress();
+        localRunBtn.textContent = localRunLabel;
+        updateActionAvailability();
+      }
     }
   });
 
@@ -622,6 +644,7 @@ export function setupSignTab(state) {
 
   xdrSignedXdrEl.addEventListener('input', () => {
     operationEpoch += 1;
+    resetOutput();
     updateActionAvailability();
   });
 

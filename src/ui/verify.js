@@ -23,6 +23,7 @@ export function setupVerifyTab(state) {
   const sigFileInput = byId('verify-sig-file');
   const expectedSignerEl = byId('verify-expected-signer');
   const runBtn = byId('verify-run');
+  const runLabel = runBtn.textContent;
   const cancelBtn = byId('verify-cancel');
   const progressEl = byId('verify-progress');
   const progressLabelEl = byId('verify-progress-label');
@@ -48,6 +49,25 @@ export function setupVerifyTab(state) {
   function setResultCardMode(mode) {
     resultCard.classList.remove('valid', 'invalid', 'warning');
     if (mode) resultCard.classList.add(mode);
+  }
+
+  function clearReport() {
+    resultCard.classList.add('hidden');
+    setResultCardMode('');
+    resultTitle.textContent = '';
+    resultBadge.textContent = '';
+    resultBadge.className = 'badge';
+    resultBadge.setAttribute('aria-label', 'Verification result: not checked');
+    resultMessage.textContent = '';
+    resultSigner.value = '';
+    resultChecked.value = '';
+    resultDetails.value = '';
+    copySignerBtn.disabled = true;
+  }
+
+  function invalidateVerification() {
+    verificationEpoch += 1;
+    clearReport();
   }
 
   function getMode() {
@@ -233,6 +253,7 @@ export function setupVerifyTab(state) {
   function renderReport(report) {
     resultCard.classList.remove('hidden');
     resultSigner.value = report.signer || '';
+    copySignerBtn.disabled = !report.signer;
 
     if (Array.isArray(report.checked?.hashes) && report.checked.hashes.length > 0) {
       resultChecked.value = report.checked.hashes.map((item) => `${item.alg}: ${item.hex}`).join(' | ');
@@ -290,7 +311,7 @@ export function setupVerifyTab(state) {
   }
 
   modeFileEl.addEventListener('change', async () => {
-    verificationEpoch += 1;
+    invalidateVerification();
     cancelActiveOperation();
     applyModeUi();
     clearInputContext();
@@ -301,7 +322,7 @@ export function setupVerifyTab(state) {
   });
 
   modeTextEl.addEventListener('change', async () => {
-    verificationEpoch += 1;
+    invalidateVerification();
     cancelActiveOperation();
     applyModeUi();
     clearInputContext();
@@ -312,7 +333,7 @@ export function setupVerifyTab(state) {
   });
 
   fileInput.addEventListener('change', async () => {
-    verificationEpoch += 1;
+    invalidateVerification();
     cancelActiveOperation();
     clearInputContext();
     updateRunAvailability();
@@ -322,7 +343,7 @@ export function setupVerifyTab(state) {
   });
 
   textInput.addEventListener('input', async () => {
-    verificationEpoch += 1;
+    invalidateVerification();
     cancelActiveOperation();
     clearInputContext();
     updateRunAvailability();
@@ -330,7 +351,7 @@ export function setupVerifyTab(state) {
   });
 
   sigFileInput.addEventListener('change', () => {
-    verificationEpoch += 1;
+    invalidateVerification();
     updateRunAvailability();
   });
 
@@ -347,7 +368,7 @@ export function setupVerifyTab(state) {
       textInput.value = text;
       modeTextEl.checked = true;
       modeFileEl.checked = false;
-      verificationEpoch += 1;
+      invalidateVerification();
       cancelActiveOperation();
       applyModeUi();
       clearInputContext();
@@ -360,19 +381,18 @@ export function setupVerifyTab(state) {
   });
 
   expectedSignerEl.addEventListener('input', () => {
-    verificationEpoch += 1;
+    invalidateVerification();
     expectedSignerOverridden = expectedSignerEl.value.trim() !== autoExpectedSigner;
   });
 
   runBtn.addEventListener('click', async () => {
-    const previousLabel = runBtn.textContent;
     const epoch = verificationEpoch;
     const controller = beginAbortableOperation();
     let operationContext = null;
     contextBusy = true;
     runBtn.disabled = true;
     runBtn.textContent = 'Verifying...';
-    resultCard.classList.add('hidden');
+    clearReport();
 
     try {
       setProgress({ phase: 'start', message: 'Preparing verification...' });
@@ -413,8 +433,9 @@ export function setupVerifyTab(state) {
         `Verification completed: ${report.summary} signer=${report.signer || '-'} expected=${expectedSigner || '-'}`
       );
     } catch (err) {
-      if (isAbortError(err)) {
-        resultCard.classList.add('hidden');
+      if (activeAbortController !== controller) return;
+      if (isAbortError(err) || epoch !== verificationEpoch) {
+        clearReport();
         appendLog(logEl, 'Verification cancelled.');
         showToast('warning', 'Verification cancelled.');
         return;
@@ -436,11 +457,13 @@ export function setupVerifyTab(state) {
       if (operationContext && operationContext !== state.verify.inputContext) {
         wipeInputBytes(operationContext);
       }
-      contextBusy = false;
-      finishAbortableOperation(controller);
-      resetProgress();
-      runBtn.textContent = previousLabel;
-      updateRunAvailability();
+      if (activeAbortController === controller) {
+        contextBusy = false;
+        finishAbortableOperation(controller);
+        resetProgress();
+        runBtn.textContent = runLabel;
+        updateRunAvailability();
+      }
     }
   });
 
@@ -456,15 +479,17 @@ export function setupVerifyTab(state) {
   });
 
   window.addEventListener('keys:updated', () => {
-    verificationEpoch += 1;
+    invalidateVerification();
     syncExpectedSignerFromSession();
   });
   registerSessionWipeHandler(() => {
+    invalidateVerification();
     cancelActiveOperation();
     clearInputContext();
   });
 
   applyModeUi();
+  clearReport();
   syncExpectedSignerFromSession();
   resultBadge.setAttribute('aria-label', 'Verification result: neutral');
   resetProgress();

@@ -38,6 +38,7 @@ test('deployment sends required headers and refuses framing', async ({ page, req
 
 test('external-wallet build disables local-secret controls in the browser', async ({ page, browserName }) => {
   await page.goto('http://127.0.0.1:4174/');
+  await expect(page.locator('#sys-status-text')).not.toHaveText('Checking cryptography…');
   const startupStatus = await page.locator('#sys-status-text').textContent();
   if (startupStatus === 'Cryptography unavailable') {
     expect(browserName).toBe('webkit');
@@ -63,6 +64,7 @@ test('local-secret flow, operation gate, hashing cancellation, signing, and life
   page.on('pageerror', (err) => pageErrors.push(err.message));
 
   await page.goto('/');
+  await expect(page.locator('#sys-status-text')).not.toHaveText('Checking cryptography…');
   const startupStatus = await page.locator('#sys-status-text').textContent();
   if (startupStatus === 'Cryptography unavailable') {
     expect(browserName).toBe('webkit');
@@ -128,8 +130,25 @@ test('local-secret flow, operation gate, hashing cancellation, signing, and life
   await page.locator('#nav-sign').click();
   await page.locator('#sign-mode-text').check();
 
+  // Hold one cooperative hash yield until cancellation has been exercised.
+  // Hashing can otherwise finish between Playwright's visibility polls.
+  await page.evaluate(() => {
+    const original = window.setTimeout;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    window.releaseHashYield = release;
+    window.setTimeout = function (callback, delay, ...args) {
+      if (delay === 0) {
+        window.setTimeout = original;
+        return original(() => gate.then(() => callback(...args)), 0);
+      }
+      return original(callback, delay, ...args);
+    };
+  });
   await page.locator('#sign-text-input').fill('x'.repeat(512 * 1024));
-  await expect(page.locator('#sign-cancel')).toBeVisible({ timeout: 3_000 });
+  await expect(page.locator('#sign-cancel')).toBeVisible();
+  await page.locator('#sign-cancel').click();
+  await page.evaluate(() => { window.releaseHashYield(); delete window.releaseHashYield; });
   await page.locator('#sign-text-input').fill('abc');
   await expect(page.locator('#sign-sha256-hex')).toHaveValue(SHA256_ABC, { timeout: 10_000 });
   await expect(page.locator('#sign-sha3-hex')).toHaveValue(SHA3_512_ABC);
