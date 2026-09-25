@@ -35,7 +35,13 @@ jobs:
         run: npm run check
 
       - name: Remove unsupported response-header marker
-        run: rm -f dist/_headers
+        # GitHub Pages cannot serve _headers. Drop it from the manifest as well so the uploaded
+        # artifact still passes exact-set verification.
+        run: |
+          rm -f dist/_headers
+          grep -v '  _headers$' dist/artifact-manifest.sha256 > dist/artifact-manifest.tmp
+          mv dist/artifact-manifest.tmp dist/artifact-manifest.sha256
+          npm run verify:artifact
 
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
