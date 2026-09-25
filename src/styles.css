@@ -440,7 +440,7 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
-.secret-display:empty::before {
+[data-empty-text]:empty::before {
   content: attr(data-empty-text);
   color: var(--text-muted);
 }

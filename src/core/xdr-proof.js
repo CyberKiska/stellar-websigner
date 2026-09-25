@@ -1,4 +1,4 @@
-import { PROOF_TYPE } from './constants.js';
+import { MANIFEST_DATA_NAME, PROOF_TYPE } from './constants.js';
 import { bytesEqual, bytesToBase64, bytesToHexLower } from './bytes.js';
 import { assertStrictEd25519PublicKey } from './ed25519-validation.js';
 import { knownNetworkPassphrases } from './network.js';
@@ -41,6 +41,7 @@ export async function createXdrProofDraft({ inputContext, signerAddress, network
   return Object.freeze({
     operationId: `sha256:${bytesToHexLower(manifestDigest)}`,
     unsignedXdr: txEnvelopeToBase64(unsignedEnvelope.envelopeXdr),
+    dataName: MANIFEST_DATA_NAME,
     txXdr: unsignedEnvelope.txXdr,
     manifestBytes,
     manifestDigest,

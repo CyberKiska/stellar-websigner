@@ -1,5 +1,5 @@
 import { registerSessionWipeHandler } from '../app/session-wipe.js';
-import { base64ToBytes } from '../core/bytes.js';
+import { base64ToBytes, bytesToBase64, bytesToHexLower } from '../core/bytes.js';
 import { PUBLIC_NETWORK_PASSPHRASE } from '../core/constants.js';
 import {
   createFileInputContext,
@@ -45,6 +45,7 @@ export function setupSignTab(state) {
   const xdrCreateBtn = byId('sign-xdr-create');
   const xdrUnsignedXdrEl = byId('sign-xdr-unsigned-xdr');
   const xdrSignedXdrEl = byId('sign-xdr-signed-xdr');
+  const xdrManifestDigestEl = byId('sign-xdr-manifest-digest');
 
   const outputSignerEl = byId('sign-output-signer');
   const outputProfileEl = byId('sign-output-profile');
@@ -122,6 +123,7 @@ export function setupSignTab(state) {
   function resetXdrDraft() {
     state.sign.xdrDraft = null;
     xdrUnsignedXdrEl.value = '';
+    xdrManifestDigestEl.textContent = '';
     xdrSignedXdrEl.value = '';
     updateActionAvailability();
   }
@@ -401,6 +403,11 @@ export function setupSignTab(state) {
 
     state.sign.xdrDraft = draft;
     xdrUnsignedXdrEl.value = draft.unsignedXdr;
+    xdrManifestDigestEl.textContent = [
+      `name:   ${draft.dataName}`,
+      `base64: ${bytesToBase64(draft.manifestDigest)}`,
+      `hex:    ${bytesToHexLower(draft.manifestDigest)}`,
+    ].join('\n');
     appendLog(
       logEl,
       `Unsigned XDR proof generated. operation=${draft.operationId} signer=${draft.signerAddress} network=public hashes=${draft.boundHashes.map((item) => item.alg).join(', ')}`

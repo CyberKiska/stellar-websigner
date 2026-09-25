@@ -258,6 +258,12 @@
                 </div>
 
                 <div class="form-group">
+                  <span id="sign-xdr-manifest-digest-label" class="field-label">Confirm in your wallet before signing</span>
+                  <div id="sign-xdr-manifest-digest" class="mono-box" aria-labelledby="sign-xdr-manifest-digest-label" data-empty-text="Generate unsigned XDR to see the value to confirm."></div>
+                  <p class="muted-copy">The wallet must show exactly one Manage Data operation named <code>org.stellar-websigner.manifest.sha256</code> with this value and sequence number 0. Any other operation, value, or account means the request is not the one generated here.</p>
+                </div>
+
+                <div class="form-group">
                   <label for="sign-xdr-signed-xdr">Paste Signed XDR</label>
                   <textarea id="sign-xdr-signed-xdr" rows="4" placeholder="AAAA..." autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
                 </div>

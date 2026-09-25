@@ -169,6 +169,9 @@ test('external XDR handoff with independent signing, wrong network, and stale ou
   expect(draft.transaction.fee).toBe(8000);
   expect(draft.transaction.operations).toHaveLength(1);
   expect(draft.transaction.operations[0].body.dataName).toBe('org.stellar-websigner.manifest.sha256');
+  const dataValue = Buffer.from(draft.transaction.operations[0].body.dataValue);
+  await expect(page.locator('#sign-xdr-manifest-digest')).toContainText(`base64: ${dataValue.toString('base64')}`);
+  await expect(page.locator('#sign-xdr-manifest-digest')).toContainText(`hex:    ${dataValue.toString('hex')}`);
   const signedXdr = (network, txXdr = draft.txXdr) => {
     const txHash = sha256(Buffer.concat([sha256(network), Buffer.from([0, 0, 0, 2]), txXdr]));
     return Buffer.from(encodeSignedTxEnvelope({
