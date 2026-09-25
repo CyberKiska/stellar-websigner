@@ -12,6 +12,7 @@ import { TESTNET_NETWORK_PASSPHRASE } from '../src/core/constants.js';
 import { derivePublicKeyFromSeed, signBytesWithSeed, signatureHint } from '../src/core/ed25519.js';
 import { decodeEd25519SecretSeed, encodeEd25519PublicKey } from '../src/core/strkey.js';
 import { computeTransactionHash, encodeSignedTxEnvelope } from '../src/core/xdr.js';
+import { verifyDetachedSignature } from '../src/core/verify.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -221,11 +222,8 @@ async function buildVectors() {
           sha3_512Hex: walletContext.digests.sha3_512.hex,
         },
         manageData: {
-          entries: draft.boundHashes.map((item) => ({
-            name: item.manageDataName,
-            alg: item.alg,
-            valueHex: item.digestHex,
-          })),
+          name: draft.dataName,
+          valueHex: bytesToHexLower(draft.manifestDigest),
         },
         unsignedXdr: draft.unsignedXdr,
         txHashHex: bytesToHexLower(txHash),
@@ -249,11 +247,8 @@ async function buildVectors() {
           sha3_512Hex: placeholderContext.digests.sha3_512.hex,
         },
         manageData: {
-          entries: placeholderDraft.boundHashes.map((item) => ({
-            name: item.manageDataName,
-            alg: item.alg,
-            valueHex: item.digestHex,
-          })),
+          name: placeholderDraft.dataName,
+          valueHex: bytesToHexLower(placeholderDraft.manifestDigest),
         },
         unsignedXdr: placeholderDraft.unsignedXdr,
         txHashHex: bytesToHexLower(placeholderTxHash),
@@ -265,8 +260,20 @@ async function buildVectors() {
   };
 }
 
+async function assertVectorsVerify(data) {
+  for (const vector of data.vectors) {
+    if (!vector.doc) continue;
+    const content = vector.input.type === 'text' ? vector.input.text : vector.input.fileContentUtf8;
+    const inputContext =
+      vector.input.type === 'text' ? await makeTextContext(content) : await makeFileContext(vector.input.fileName, utf8ToBytes(content));
+    const report = await verifyDetachedSignature({ signatureDoc: vector.doc, inputContext, expectedSigner: vector.signer });
+    if (report.summary !== 'VALID') throw new Error(`${vector.id}: generated vector does not verify (${report.summary}).`);
+  }
+}
+
 async function main() {
   const data = await buildVectors();
+  await assertVectorsVerify(data);
   const out = `${JSON.stringify(data, null, 2)}\n`;
   await writeFile(path.join(root, 'test-vectors.json'), out, 'utf8');
   console.log('Generated test-vectors.json');
