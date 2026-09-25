@@ -115,13 +115,19 @@ test('file identity, advisory MIME warning, stale result, and tampered manifest'
   await expect(page.locator('#verify-details')).toHaveValue(/Selected Input Matches: YES/);
   await page.locator('#verify-expected-signer').fill('');
   await page.locator('#verify-run').click();
-  await expect(page.locator('#verify-details')).toHaveValue(/No external signer expectation was supplied/);
-  await expect(page.locator('#verify-details')).toHaveValue(/Expected Signer Matches: YES/);
+  // A self-asserted signer is never presented as VALID.
+  await expect(page.locator('#verify-result-badge')).toHaveText('UNVERIFIED SIGNER');
+  await expect(page.locator('#verify-result-title')).toHaveText('Valid Signature, Signer Not Verified');
+  await expect(page.locator('#verify-details')).toHaveValue(/Result: SIGNER_UNVERIFIED/);
+  await expect(page.locator('#verify-details')).toHaveValue(/No expected signer was supplied/);
+  await expect(page.locator('#verify-details')).toHaveValue(/Expected Signer Matches: NOT CHECKED/);
   const tampered = structuredClone(doc);
   tampered.protected.input.name = 'renamed.txt';
   await verifyFile(page, tampered, { name: 'renamed.txt' });
   await expect(page.locator('#verify-result-badge')).toHaveText('INVALID');
   await expect(page.locator('#verify-details')).toHaveValue(/Selected Input Matches: NOT CHECKED/);
+  await expect(page.locator('#verify-result-signer-label')).toHaveText('Claimed Signer (not authenticated)');
+  await expect(page.locator('#verify-result-checked')).toHaveValue('-');
 });
 
 test('external XDR handoff with independent signing, wrong network, and stale output', async ({ page }) => {

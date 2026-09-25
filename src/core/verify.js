@@ -307,8 +307,8 @@ function validateSigner({ report, signatureDoc }) {
 function validateExpectedSigner({ report, expectedSigner, actualSigner }) {
   const expected = String(expectedSigner || '').trim();
   if (!expected) {
-    report.ok('No external signer expectation was supplied.');
-    report.markContextMatches();
+    // A self-asserted signer is not an identity check; leave the context result NOT CHECKED.
+    report.warn('No expected signer was supplied; the signer identity was not checked.');
     return;
   }
   try {
@@ -423,9 +423,11 @@ function createReport() {
         ? 'INVALID'
         : inputMatches === false || contextMatches === false
           ? 'MISMATCH'
-          : warnings.length > 0
-            ? 'VALID_WITH_WARNINGS'
-            : 'VALID';
+          : inputMatches !== true || contextMatches !== true
+            ? 'SIGNER_UNVERIFIED'
+            : warnings.length > 0
+              ? 'VALID_WITH_WARNINGS'
+              : 'VALID';
       return {
         valid,
         signatureValid,
@@ -457,12 +459,13 @@ export function validateInputContext(inputContext) {
 }
 
 export function diagnosticsForDisplay(report) {
+  const unauthenticated = report.signatureValid ? '' : ' (claimed, not authenticated)';
   const lines = [
     `Result: ${report.summary || (report.valid ? 'VALID' : 'INVALID')}`,
     `Signature Valid: ${report.signatureValid ? 'YES' : 'NO'}`,
     `Selected Input Matches: ${formatCheckState(report.inputMatches)}`,
     `Expected Signer Matches: ${formatCheckState(report.contextMatches)}`,
-    `Signer: ${report.signer || '-'}`,
+    `Signer${unauthenticated}: ${report.signer || '-'}`,
     `Schema: ${report.checked?.schema || '-'}`,
     `Proof Type: ${report.checked?.proofType || '-'}`,
     `Payload Type: ${report.checked?.payloadType || '-'}`,
@@ -470,7 +473,7 @@ export function diagnosticsForDisplay(report) {
     `Mode: ${report.checked?.mode || '-'}`,
   ];
   if (report.checked?.hashes?.length) {
-    lines.push('Hashes:');
+    lines.push(`Hashes${unauthenticated}:`);
     for (const item of report.checked.hashes) lines.push(`  ${item.alg}: ${item.hex}`);
   } else lines.push('Hashes: -');
   if (Number.isInteger(report.checked?.messageBytesLength)) lines.push(`Signed Manifest Bytes: ${report.checked.messageBytesLength}`);

@@ -32,6 +32,7 @@ export function setupVerifyTab(state) {
   const resultBadge = byId('verify-result-badge');
   const resultMessage = byId('verify-result-message');
   const resultSigner = byId('verify-result-signer');
+  const resultSignerLabel = byId('verify-result-signer-label');
   const resultChecked = byId('verify-result-checked');
   const resultDetails = byId('verify-details');
 
@@ -230,63 +231,60 @@ export function setupVerifyTab(state) {
     });
   }
 
+  function setResult(mode, title, badge, message) {
+    setResultCardMode(mode === 'neutral' ? null : mode);
+    resultTitle.textContent = title;
+    resultBadge.textContent = badge;
+    resultBadge.className = `badge ${mode}`;
+    resultBadge.setAttribute('aria-label', `Verification result: ${badge.toLowerCase()}`);
+    resultMessage.textContent = message;
+  }
+
   function renderReport(report) {
     resultCard.classList.remove('hidden');
+    // Metadata of a failed proof is attacker-controlled; never present it as the signer or checked data.
+    const authenticated = report.signatureValid === true;
+    resultSignerLabel.textContent = authenticated ? 'Signer' : 'Claimed Signer (not authenticated)';
     resultSigner.value = report.signer || '';
-
-    if (Array.isArray(report.checked?.hashes) && report.checked.hashes.length > 0) {
-      resultChecked.value = report.checked.hashes.map((item) => `${item.alg}: ${item.hex}`).join(' | ');
-    } else if (Number.isInteger(report.checked?.messageBytesLength)) {
-      resultChecked.value = `SEP-53 raw bytes: ${report.checked.messageBytesLength}`;
-    } else {
-      resultChecked.value = '-';
-    }
-
+    resultChecked.value =
+      authenticated && Array.isArray(report.checked?.hashes) && report.checked.hashes.length > 0
+        ? report.checked.hashes.map((item) => `${item.alg}: ${item.hex}`).join(' | ')
+        : '-';
     resultDetails.value = diagnosticsForDisplay(report);
 
-    if (report.signatureValid && (!report.inputMatches || !report.contextMatches)) {
-      setResultCardMode('warning');
-      resultTitle.textContent = 'Valid Signature, Context Mismatch';
-      resultBadge.textContent = 'MISMATCH';
-      resultBadge.className = 'badge warning';
-      resultBadge.setAttribute('aria-label', 'Verification result: valid signature with context mismatch');
-      resultMessage.textContent =
-        report.contextErrors?.[0] ||
-        report.inputErrors?.[0] ||
-        'The signature is cryptographically valid, but it is not valid for the selected input or expected signer.';
-      showToast('warning', 'Signature valid; selected verification context does not match.');
-      return;
-    }
-
-    if (report.valid) {
-      if (Array.isArray(report.warnings) && report.warnings.length > 0) {
-        setResultCardMode('warning');
-        resultTitle.textContent = 'Verification Warning';
-        resultBadge.textContent = 'WARNING';
-        resultBadge.className = 'badge warning';
-        resultBadge.setAttribute('aria-label', 'Verification result: warning');
-        resultMessage.textContent = report.warnings[0];
+    switch (report.summary) {
+      case 'VALID':
+        setResult('valid', 'Signature Valid', 'VALID', 'Signature is valid for the selected input and the expected signer.');
+        showToast('success', 'Verification successful.');
+        return;
+      case 'VALID_WITH_WARNINGS':
+        setResult('warning', 'Verification Warning', 'WARNING', report.warnings[0]);
         showToast('warning', 'Verification completed with warnings.');
         return;
-      }
-
-      setResultCardMode('valid');
-      resultTitle.textContent = 'Signature Valid';
-      resultBadge.textContent = 'VALID';
-      resultBadge.className = 'badge valid';
-      resultBadge.setAttribute('aria-label', 'Verification result: valid');
-      resultMessage.textContent = 'Signature is valid for the supplied input and signer.';
-      showToast('success', 'Verification successful.');
-      return;
+      case 'SIGNER_UNVERIFIED':
+        setResult(
+          'warning',
+          'Valid Signature, Signer Not Verified',
+          'UNVERIFIED SIGNER',
+          `The signature is valid for the selected input, but no expected signer was supplied. It only shows that the holder of ${report.signer} signed it. Enter the signer's G... address obtained from a trusted source and verify again.`
+        );
+        showToast('warning', 'Signature valid; signer identity was not checked.');
+        return;
+      case 'MISMATCH':
+        setResult(
+          'warning',
+          'Valid Signature, Context Mismatch',
+          'MISMATCH',
+          report.contextErrors?.[0] ||
+            report.inputErrors?.[0] ||
+            'The signature is cryptographically valid, but it is not valid for the selected input or expected signer.'
+        );
+        showToast('warning', 'Signature valid; selected verification context does not match.');
+        return;
+      default:
+        setResult('invalid', 'Signature Invalid', 'INVALID', report.signatureErrors?.[0] || report.errors[0] || 'Signature verification failed.');
+        showToast('error', 'Signature verification failed.');
     }
-
-    setResultCardMode('invalid');
-    resultTitle.textContent = 'Signature Invalid';
-    resultBadge.textContent = 'INVALID';
-    resultBadge.className = 'badge invalid';
-    resultBadge.setAttribute('aria-label', 'Verification result: invalid');
-    resultMessage.textContent = report.signatureErrors?.[0] || report.errors[0] || 'Signature verification failed.';
-    showToast('error', 'Signature verification failed.');
   }
 
   modeFileEl.addEventListener('change', async () => {
@@ -421,12 +419,8 @@ export function setupVerifyTab(state) {
       }
       const message = friendlyError(err);
       resultCard.classList.remove('hidden');
-      setResultCardMode('invalid');
-      resultTitle.textContent = 'Verification Failed';
-      resultBadge.textContent = 'INVALID';
-      resultBadge.className = 'badge invalid';
-      resultBadge.setAttribute('aria-label', 'Verification result: invalid');
-      resultMessage.textContent = message;
+      setResult('invalid', 'Verification Failed', 'INVALID', message);
+      resultSignerLabel.textContent = 'Signer';
       resultSigner.value = '';
       resultChecked.value = '-';
       resultDetails.value = `Result: INVALID\n\nFAIL: ${message}`;
