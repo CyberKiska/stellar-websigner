@@ -34,7 +34,3 @@ export function suggestSignatureFileName({ inputType, originalName }) {
   }
   return 'plain-text.sig';
 }
-
-export function isV3SignatureDocument(signatureDoc) {
-  return String(signatureDoc?.schema || '') === SIGNATURE_SCHEMA_V3;
-}

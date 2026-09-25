@@ -81,10 +81,6 @@ export function appendLog(textarea, message) {
   textarea.scrollTop = textarea.scrollHeight;
 }
 
-export function clearLog(textarea) {
-  textarea.value = '';
-}
-
 export function friendlyError(error) {
   if (!error) return 'Unknown error.';
   if (typeof error === 'string') return error;

@@ -1,4 +1,4 @@
-import { bytesEqual, wipeBytes } from './bytes.js';
+import { wipeBytes } from './bytes.js';
 
 const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const STRKEY_VERSION_BYTE_ED25519_PUBLIC_KEY = 6 << 3;
@@ -19,24 +19,6 @@ export function encodeEd25519PublicKey(publicBytes) {
 
 export function encodeEd25519SecretSeed(seedBytes) {
   return encodeStrKey(seedBytes, STRKEY_VERSION_BYTE_ED25519_SECRET_SEED);
-}
-
-export function isValidPublicAddress(address) {
-  try {
-    decodeEd25519PublicKey(address);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function isValidSecretSeed(seed) {
-  try {
-    decodeEd25519SecretSeed(seed);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function decodeStrKey(strKey, expectedVersionByte, expectedPayloadLength, expectedPrefix) {
@@ -167,8 +149,4 @@ function base32Decode(input) {
   }
 
   return outOffset === out.length ? out : out.slice(0, outOffset);
-}
-
-export function sameAddressBytes(a, b) {
-  return bytesEqual(a, b);
 }

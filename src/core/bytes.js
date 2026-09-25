@@ -133,18 +133,10 @@ export function canonicalBase64ToBytes(base64Value, { maxBytes = Number.POSITIVE
   return out;
 }
 
-export function normalizeBase64(base64Value, options) {
-  return bytesToBase64(canonicalBase64ToBytes(base64Value, options));
-}
-
 export function base64UrlToBytes(value) {
   let normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
   while (normalized.length % 4 !== 0) normalized += '=';
   return base64ToBytes(normalized);
-}
-
-export function bytesToBase64Url(bytes) {
-  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 export function concatBytes(...parts) {
@@ -172,12 +164,6 @@ export function wipeBytes(value) {
   if (value instanceof Uint8Array) {
     value.fill(0);
   }
-}
-
-export function shortHex(value, prefix = 10, suffix = 10) {
-  const hex = typeof value === 'string' ? value.toLowerCase() : bytesToHexLower(value);
-  if (hex.length <= prefix + suffix) return hex;
-  return `${hex.slice(0, prefix)}...${hex.slice(hex.length - suffix)}`;
 }
 
 export function safeJsonParse(text, { maxLength = 256 * 1024, maxDepth = 16 } = {}) {
