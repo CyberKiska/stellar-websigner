@@ -33,8 +33,21 @@ test.beforeEach(async ({ page, browserName }) => {
 });
 
 async function loadKey(page, secret = false) {
-  await page.locator(secret ? '#keys-seed-input' : '#keys-g-input').fill(secret ? SEED : SIGNER);
-  await page.locator(secret ? '#keys-load-seed' : '#keys-load-g').click();
+  if (secret) {
+    // Supplying the matching G first selects the sign/verify pairing check (no private-key export).
+    await page.locator('#keys-g-input').fill('GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ');
+    await page.locator('#keys-seed-input').fill(SEED);
+    await page.locator('#keys-load-seed').click();
+    await expect(page.locator('.toast.error')).toContainText('does not match');
+    await expect(page.locator('#sys-status-text')).toHaveText('No key loaded');
+    await page.locator('#keys-g-input').fill(SIGNER);
+    await page.locator('#keys-seed-input').fill(SEED);
+    await page.locator('#keys-load-seed').click();
+    await expect(page.locator('#sys-status-text')).toHaveText('Signing key active');
+  } else {
+    await page.locator('#keys-g-input').fill(SIGNER);
+    await page.locator('#keys-load-g').click();
+  }
   await expect(page.locator('#keys-generated-g')).toHaveValue(SIGNER);
 }
 

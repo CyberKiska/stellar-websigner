@@ -615,6 +615,28 @@ export async function runSelfTest() {
       if (!publicKey.equals(original)) throw new Error('Caller public key buffer was modified.');
     }),
 
+    createResult('seed import with the matching public key never exports the private key', async () => {
+      const subtle = globalThis.crypto.subtle;
+      const seed = hexToBytes('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60');
+      const publicBytes = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a');
+      const observed = [];
+      const auditingSubtle = {
+        importKey(format, keyData, algorithm, extractable, usages) {
+          if (format === 'pkcs8' && extractable) observed.push('extractable private import');
+          return subtle.importKey(format, keyData, algorithm, extractable, usages);
+        },
+        exportKey(format, key) {
+          observed.push(`export ${format}`);
+          return subtle.exportKey(format, key);
+        },
+        sign: subtle.sign.bind(subtle),
+        verify: subtle.verify.bind(subtle),
+      };
+      const session = await createSigningKeySession(seed, { publicBytes, subtle: auditingSubtle });
+      session.destroy();
+      if (observed.length) throw new Error(`Private key material left the provider: ${observed.join(', ')}.`);
+    }),
+
     createResult('generated signing session rejects a mismatched supplied public key', async () => {
       const seedA = hexToBytes('0303030303030303030303030303030303030303030303030303030303030303');
       const seedB = hexToBytes('0404040404040404040404040404040404040404040404040404040404040404');

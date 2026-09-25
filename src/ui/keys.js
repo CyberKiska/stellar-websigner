@@ -209,14 +209,13 @@ export function setupKeysTab(state) {
     try {
       seedBytes = decodeEd25519SecretSeed(seedStr);
       seedInput.value = '';
-      signingKeySession = await createSigningKeySession(seedBytes);
+      // With the matching G... supplied, the pair is proven by a sign/verify check and the private key
+      // is never exported. Without it, browsers lacking getPublicKey() must export a temporary JWK.
+      const existingG = gInput.value.trim();
+      const publicBytes = existingG ? decodeEd25519PublicKey(existingG) : undefined;
+      signingKeySession = await createSigningKeySession(seedBytes, { publicBytes });
       if (!keyOperationIsCurrent(epoch)) return false;
       const signer = encodeEd25519PublicKey(signingKeySession.publicBytes);
-
-      const existingG = gInput.value.trim();
-      if (existingG && existingG !== signer) {
-        throw new Error('G... field does not match signer derived from S...');
-      }
 
       setState({ signingKeySession, signerAddress: signer, source: 'imported-seed' });
       committed = true;
