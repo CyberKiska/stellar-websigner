@@ -72,18 +72,17 @@ test('text DOM bytes, independent SEP-53 verification, download, and key cleanup
   await page.locator('#sign-mode-text').check();
   await expect(page.locator('#sign-local-run')).toBeDisabled(); // Empty text is a UI limitation.
   await page.locator('#sign-text-input').fill('a\r\nb\rc');
-  // Textarea newline normalization of inserted CR is engine-specific (WebKit may drop a lone CR);
-  // the invariant is that no CR survives and the app signs exactly the resulting DOM value.
+  // Engines differ in whether the textarea value keeps CR; the app normalizes CRLF/CR to LF before
+  // hashing, so the signed bytes are 'a\nb\nc' everywhere.
   const text = await page.locator('#sign-text-input').inputValue();
-  expect(text).not.toContain('\r');
-  expect(text.startsWith('a\nb')).toBe(true);
+  const signedText = 'a\nb\nc';
   await expect(page.locator('#sign-local-run')).toBeEnabled();
   await page.locator('#sign-local-run').click();
   await expect(page.locator('#sign-status')).toContainText('Content signature created locally');
   const doc = JSON.parse(await page.locator('#sign-output-json').inputValue());
-  expect(doc.protected.input.size).toBe(Buffer.byteLength(text));
-  expect(doc.protected.hashes[0].hex).toBe(sha256(text).toString('hex'));
-  expect(doc.protected.hashes[1].hex).toBe(createHash('sha3-512').update(text).digest('hex'));
+  expect(doc.protected.input.size).toBe(5);
+  expect(doc.protected.hashes[0].hex).toBe(sha256(signedText).toString('hex'));
+  expect(doc.protected.hashes[1].hex).toBe(createHash('sha3-512').update(signedText).digest('hex'));
   const messageHash = sha256(Buffer.concat([
     Buffer.from('Stellar Signed Message:\n'), Buffer.from(canonical(doc.protected)),
   ]));

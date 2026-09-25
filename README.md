@@ -77,7 +77,7 @@ Version 3.0.0 accepts only JSON schema `stellar-signature/v3`. Earlier container
 - JSON files require valid UTF-8 without a BOM; parsing rejects duplicate members, noncharacters, excessive size/depth, unknown fields, missing fields, and incorrect field types;
 - binary fields require strings containing canonical padded RFC 4648 Base64; arrays and other coercible values are rejected.
 
-Text mode signs UTF-8 of the textarea DOM value, with no Unicode normalization and with the browser's textarea newline behavior; unpaired UTF-16 surrogates are rejected. Verifiers must supply the same DOM text value. Text is limited to 1 MiB after UTF-8 encoding and is hashed in cooperative, cancellable chunks.
+Text mode signs UTF-8 of the textarea DOM value, with no Unicode normalization; CRLF and CR are normalized to LF by the application (not every engine does this in the textarea value); unpaired UTF-16 surrogates are rejected. Verifiers must supply the same DOM text value. Text is limited to 1 MiB after UTF-8 encoding and is hashed in cooperative, cancellable chunks.
 
 Verification authenticates the canonical protected manifest before using its metadata to compare the selected input or the expected signer. `signatureValid`, `inputMatches`, and `contextMatches` are reported independently:
 

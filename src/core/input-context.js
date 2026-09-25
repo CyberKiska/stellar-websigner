@@ -61,7 +61,9 @@ export async function createFileInputContext(file, options = {}) {
 }
 
 export async function createTextInputContext(text, options = {}) {
-  const value = String(text || '');
+  // HTML textarea API values normalize CRLF/CR to LF, but not every engine applies this to every
+  // insertion path (Linux WebKit keeps CR). Normalize here so sign and verify agree across engines.
+  const value = String(text || '').replace(/\r\n?/g, '\n');
   if (value.length > MAX_TEXT_INPUT_SIZE_BYTES) {
     throw new Error(`Text input is too large. Maximum supported UTF-8 size is ${MAX_TEXT_INPUT_SIZE_BYTES} bytes.`);
   }

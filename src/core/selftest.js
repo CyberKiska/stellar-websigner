@@ -477,6 +477,14 @@ export async function runSelfTest() {
       await assertRejects(() => createFileInputContext(changingFile), 'File changed while it was being read');
     }),
 
+    createResult('text input normalizes CRLF and CR to LF before hashing', async () => {
+      const normalized = await createTextInputContext('a\r\nb\rc\n');
+      const expected = await createTextInputContext('a\nb\nc\n');
+      if (normalized.fileSize !== 6 || normalized.digests.sha256.hex !== expected.digests.sha256.hex) {
+        throw new Error('Text newlines were not normalized to LF.');
+      }
+    }),
+
     createResult('text input enforces UTF-8 byte limit and cooperative cancellation', async () => {
       const atLimit = 'a'.repeat(MAX_TEXT_INPUT_SIZE_BYTES);
       const context = await createTextInputContext(atLimit, { chunkSize: 64 * 1024 });
