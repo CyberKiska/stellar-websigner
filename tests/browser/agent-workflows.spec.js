@@ -72,14 +72,18 @@ test('text DOM bytes, independent SEP-53 verification, download, and key cleanup
   await page.locator('#sign-mode-text').check();
   await expect(page.locator('#sign-local-run')).toBeDisabled(); // Empty text is a UI limitation.
   await page.locator('#sign-text-input').fill('a\r\nb\rc');
-  await expect(page.locator('#sign-text-input')).toHaveValue('a\nb\nc');
+  // Textarea newline normalization of inserted CR is engine-specific (WebKit may drop a lone CR);
+  // the invariant is that no CR survives and the app signs exactly the resulting DOM value.
+  const text = await page.locator('#sign-text-input').inputValue();
+  expect(text).not.toContain('\r');
+  expect(text.startsWith('a\nb')).toBe(true);
   await expect(page.locator('#sign-local-run')).toBeEnabled();
   await page.locator('#sign-local-run').click();
   await expect(page.locator('#sign-status')).toContainText('Content signature created locally');
   const doc = JSON.parse(await page.locator('#sign-output-json').inputValue());
-  expect(doc.protected.input.size).toBe(5);
-  expect(doc.protected.hashes[0].hex).toBe(sha256('a\nb\nc').toString('hex'));
-  expect(doc.protected.hashes[1].hex).toBe(createHash('sha3-512').update('a\nb\nc').digest('hex'));
+  expect(doc.protected.input.size).toBe(Buffer.byteLength(text));
+  expect(doc.protected.hashes[0].hex).toBe(sha256(text).toString('hex'));
+  expect(doc.protected.hashes[1].hex).toBe(createHash('sha3-512').update(text).digest('hex'));
   const messageHash = sha256(Buffer.concat([
     Buffer.from('Stellar Signed Message:\n'), Buffer.from(canonical(doc.protected)),
   ]));
@@ -97,7 +101,7 @@ test('text DOM bytes, independent SEP-53 verification, download, and key cleanup
   await page.locator('#nav-sign').click();
   await expect(page.locator('#sign-download')).toBeDisabled();
   // End Session releases the key; it is not a full document/form eraser.
-  await expect(page.locator('#sign-text-input')).toHaveValue('a\nb\nc');
+  await expect(page.locator('#sign-text-input')).toHaveValue(text);
 });
 
 test('file identity, advisory MIME warning, stale result, and tampered manifest', async ({ page }) => {
