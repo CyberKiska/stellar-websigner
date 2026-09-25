@@ -135,8 +135,20 @@ test('local-secret flow, operation gate, hashing cancellation, signing, and life
   await page.locator('#nav-sign').click();
   await page.locator('#sign-mode-text').check();
 
+  // Stretch the cooperative hashing yields (setTimeout 0) so cancellation is exercised deterministically
+  // instead of racing an engine that finishes 512 KiB before the Cancel button can be observed.
+  await page.evaluate(() => {
+    const original = window.setTimeout.bind(window);
+    window.__restoreSetTimeout = () => { window.setTimeout = original; };
+    window.setTimeout = (callback, delay, ...args) => original(callback, delay === 0 ? 100 : delay, ...args);
+  });
   await page.locator('#sign-text-input').fill('x'.repeat(512 * 1024));
-  await expect(page.locator('#sign-cancel')).toBeVisible({ timeout: 3_000 });
+  await expect(page.locator('#sign-cancel')).toBeVisible({ timeout: 5_000 });
+  await page.locator('#sign-cancel').click();
+  await expect(page.locator('#sign-cancel')).toBeHidden();
+  await expect(page.locator('#sign-sha256-hex')).toHaveValue('');
+  await expect(page.locator('#sign-local-run')).toBeDisabled();
+  await page.evaluate(() => window.__restoreSetTimeout());
   await page.locator('#sign-text-input').fill('abc');
   await expect(page.locator('#sign-sha256-hex')).toHaveValue(SHA256_ABC, { timeout: 10_000 });
   await expect(page.locator('#sign-sha3-hex')).toHaveValue(SHA3_512_ABC);
