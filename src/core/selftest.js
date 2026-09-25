@@ -1221,6 +1221,52 @@ export async function runSelfTest() {
       );
     }),
 
+    createResult('XDR ManageData names must be printable ASCII (BOM, UTF-8, controls rejected)', async () => {
+      const context = await makeTextContext('ascii data name');
+      const fixture = await makeXdrFixture(
+        '3636363636363636363636363636363636363636363636363636363636363636',
+        context
+      );
+      const name = utf8ToBytes(MANIFEST_DATA_NAME);
+      const withName = (nameBytes) => {
+        const tx = fixture.draft.txXdr;
+        const offset = indexOfBytes(tx, name);
+        const pad = (bytes) => new Uint8Array((4 - (bytes.length % 4)) % 4);
+        return concatBytes(
+          tx.subarray(0, offset - 4),
+          uint32Bytes(nameBytes.length),
+          nameBytes,
+          pad(nameBytes),
+          tx.subarray(offset + name.length + pad(name).length)
+        );
+      };
+      const variants = [
+        concatBytes(new Uint8Array([0xef, 0xbb, 0xbf]), name), // UTF-8 BOM, previously stripped by the decoder
+        concatBytes(name, new Uint8Array([0x7f])),
+        concatBytes(name, new Uint8Array([0x0a])),
+        concatBytes(name, utf8ToBytes('\u00e9')),
+      ];
+      for (const variant of variants) {
+        const tx = withName(variant);
+        assertThrows(() => parseTransactionEnvelope(concatBytes(uint32Bytes(2), tx, uint32Bytes(0))), 'printable ASCII');
+      }
+
+      // End to end: a correctly signed proof whose data name carries a BOM must not verify.
+      const bomTx = withName(variants[0]);
+      const bomHash = await computeTransactionHash(bomTx, TESTNET_NETWORK_PASSPHRASE);
+      const bomXdr = bytesToBase64(
+        encodeSignedTxEnvelope({ txXdr: bomTx, signatures: [{ hint: fixture.hint, signature: await signBytesWithSeed(fixture.seed, bomHash) }] })
+      );
+      const verify = await verifyDetachedSignature({
+        signatureDoc: { schema: SIGNATURE_SCHEMA_V3, signer: fixture.signer, protected: fixture.draft.protectedManifest, signedXdr: bomXdr },
+        inputContext: context,
+        expectedSigner: fixture.signer,
+      });
+      if (verify.signatureValid || !verify.errors.some((line) => line.includes('printable ASCII'))) {
+        throw new Error(`BOM-prefixed ManageData name was not rejected: ${verify.summary}`);
+      }
+    }),
+
     createResult('XDR parser rejects non-canonical base64 whitespace', async () => {
       const context = await makeTextContext('strict base64 XDR');
       const fixture = await makeXdrFixture(

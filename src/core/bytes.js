@@ -1,16 +1,11 @@
 import { assertWellFormedUnicode } from './canonical-json.js';
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 
 export function utf8ToBytes(value) {
   const text = String(value);
   assertWellFormedUnicode(text);
   return textEncoder.encode(text);
-}
-
-export function bytesToUtf8(bytes) {
-  return textDecoder.decode(bytes);
 }
 
 export function bytesToHexLower(bytes) {

@@ -1,11 +1,4 @@
-import {
-  canonicalBase64ToBytes,
-  bytesEqual,
-  bytesToBase64,
-  bytesToUtf8,
-  concatBytes,
-  utf8ToBytes,
-} from './bytes.js';
+import { canonicalBase64ToBytes, bytesEqual, bytesToBase64, concatBytes, utf8ToBytes } from './bytes.js';
 import { signatureHint, verifyBytesWithPublic } from './ed25519.js';
 import { sha256 } from './hash.js';
 import { MANIFEST_DATA_NAME } from './constants.js';
@@ -44,7 +37,7 @@ export function buildUnsignedManifestEnvelope({ sourcePublicKey, manifestDigest,
   txWriter.writeInt32(1); // operation count
   txWriter.writeInt32(0); // operation source account absent
   txWriter.writeInt32(OPERATION_TYPE_MANAGE_DATA);
-  txWriter.writeString(MANIFEST_DATA_NAME);
+  txWriter.writeAsciiString(MANIFEST_DATA_NAME);
   txWriter.writeInt32(1); // dataValue present
   txWriter.writeOpaque(manifestDigest);
   txWriter.writeInt32(0); // tx.ext.v = 0
@@ -244,7 +237,7 @@ function parseOperation(reader) {
     throw new Error(`Unsafe transaction: operation type ${type} is not allowed.`);
   }
 
-  const dataName = reader.readString(64);
+  const dataName = reader.readAsciiString(64);
   const hasDataValue = reader.readInt32();
   if (hasDataValue !== 0 && hasDataValue !== 1) {
     throw new Error('Invalid ManageData optional value flag.');
@@ -336,8 +329,10 @@ class XdrWriter {
     this.writeOpaqueFixed(data);
   }
 
-  writeString(value) {
-    this.writeOpaque(utf8ToBytes(value));
+  writeAsciiString(value) {
+    const text = String(value);
+    if (!/^[\x20-\x7e]*$/.test(text)) throw new Error('XDR string must be printable ASCII.');
+    this.writeOpaque(Uint8Array.from(text, (char) => char.charCodeAt(0)));
   }
 
   finish() {
@@ -400,8 +395,14 @@ class XdrReader {
     return this.readOpaqueFixed(length);
   }
 
-  readString(maxLength) {
-    return bytesToUtf8(this.readOpaque(maxLength));
+  // Stellar ManageData names are validated by stellar-core as printable ASCII (0x20..0x7e). Decoding
+  // the bytes as UTF-8 would strip a BOM or map invalid bytes, accepting names the network rejects.
+  readAsciiString(maxLength) {
+    const bytes = this.readOpaque(maxLength);
+    for (const byte of bytes) {
+      if (byte < 0x20 || byte > 0x7e) throw new Error('XDR string must be printable ASCII.');
+    }
+    return String.fromCharCode(...bytes);
   }
 
   ensureConsumed() {
