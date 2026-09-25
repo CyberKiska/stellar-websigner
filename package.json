@@ -22,7 +22,7 @@
     "check:release": "npm run check:production && npm audit --audit-level=high"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
-    "esbuild": "0.28.1"
+    "@playwright/test": "1.63.0",
+    "esbuild": "0.28.2"
   }
 }

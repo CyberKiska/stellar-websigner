@@ -11,16 +11,22 @@ export const META_CSP =
 
 export const HTTP_CSP = `${META_CSP}; frame-ancestors 'none'`;
 
+// HSTS is ignored by browsers on plain-HTTP responses (RFC 6797 section 8.1), so it is inert on the
+// local development server and binding on the HTTPS production origin.
 export const SECURITY_HEADERS = Object.freeze([
   ['Content-Security-Policy', HTTP_CSP],
+  ['Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload'],
   ['X-Frame-Options', 'DENY'],
   ['X-Content-Type-Options', 'nosniff'],
-  ['Strict-Transport-Security', 'max-age=31536000'],
   ['Cache-Control', 'no-cache'],
   ['Referrer-Policy', 'no-referrer'],
   ['Cross-Origin-Opener-Policy', 'same-origin'],
+  ['Cross-Origin-Embedder-Policy', 'require-corp'],
   ['Cross-Origin-Resource-Policy', 'same-origin'],
-  ['Permissions-Policy', 'clipboard-read=(self), clipboard-write=(self)'],
+  [
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=(), usb=(), clipboard-read=(self), clipboard-write=(self)',
+  ],
 ]);
 
 export function securityHeadersText() {

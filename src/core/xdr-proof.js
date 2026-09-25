@@ -8,8 +8,8 @@ import {
   protectedManifestSha256,
 } from './protected-manifest.js';
 import {
-  assertSafeManageDataEnvelope,
-  buildUnsignedManageDataEnvelope,
+  assertManifestProofEnvelope,
+  buildUnsignedManifestEnvelope,
   computeTransactionHash,
   findValidDecoratedSignature,
   parseTransactionEnvelope,
@@ -36,21 +36,12 @@ export async function createXdrProofDraft({ inputContext, signerAddress, network
   });
   const manifestBytes = protectedManifestBytes(protectedManifest);
   const manifestDigest = await protectedManifestSha256(protectedManifest);
-  const unsignedEnvelope = buildUnsignedManageDataEnvelope({
-    sourcePublicKey,
-    sequence: 0n,
-    fee: 8000,
-    manageDataEntries: [
-      {
-        dataName: MANAGE_DATA_NAME.MANIFEST_SHA256,
-        dataValue: manifestDigest,
-      },
-    ],
-  });
+  const unsignedEnvelope = buildUnsignedManifestEnvelope({ sourcePublicKey, manifestDigest });
 
   return Object.freeze({
     operationId: `sha256:${bytesToHexLower(manifestDigest)}`,
     unsignedXdr: txEnvelopeToBase64(unsignedEnvelope.envelopeXdr),
+    dataName: MANAGE_DATA_NAME.MANIFEST_SHA256,
     txXdr: unsignedEnvelope.txXdr,
     manifestBytes,
     manifestDigest,
@@ -90,17 +81,7 @@ export async function finalizeXdrProof({ inputContext, signedXdr, draft, expecte
   if (!bytesEqual(parsed.txXdr, draft.txXdr)) {
     throw new Error('Signed XDR transaction differs from the exact unsigned draft.');
   }
-  const safeData = assertSafeManageDataEnvelope(parsed, {
-    expectedEntries: [
-      {
-        dataName: MANAGE_DATA_NAME.MANIFEST_SHA256,
-        dataValue: currentManifestDigest,
-      },
-    ],
-  });
-  if (safeData.manageDataEntries.length !== 1) {
-    throw new Error('Signed XDR must contain exactly one protected-manifest digest operation.');
-  }
+  const safeData = assertManifestProofEnvelope(parsed, currentManifestDigest);
 
   const txSourceAddress = encodeEd25519PublicKey(safeData.sourceAccount);
   if (txSourceAddress !== signer) {

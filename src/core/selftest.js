@@ -4,6 +4,7 @@ import {
   bytesToBase64,
   bytesToHexLower,
   concatBytes,
+  decodeUtf8Strict,
   hexToBytes,
   safeJsonParse,
   utf8ToBytes,
@@ -19,7 +20,7 @@ import {
 import { assertStrictEd25519PublicKey, assertStrictEd25519Signature } from './ed25519-validation.js';
 import { canonicalJsonStringify } from './canonical-json.js';
 import { assertTopLevelBrowsingContext, localSecretOperationsAllowed } from './deployment-policy.js';
-import { computeDigests, createSha256Stream, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
+import { computeDigests, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
 import { HASH_ALG, MANAGE_DATA_NAME, PROOF_TYPE, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
 import {
@@ -33,7 +34,7 @@ import { createXdrProofDraft, finalizeXdrProof } from './xdr-proof.js';
 import { encodeEd25519PublicKey, decodeEd25519PublicKey, decodeEd25519SecretSeed, encodeEd25519SecretSeed } from './strkey.js';
 import { verifyDetachedSignature } from './verify.js';
 import {
-  buildUnsignedManageDataEnvelope,
+  buildUnsignedManifestEnvelope,
   computeTransactionHash,
   encodeSignedTxEnvelope,
   parseTransactionEnvelope,
@@ -51,19 +52,19 @@ async function makeFileContext(name, bytes, options = {}) {
     fileName: name,
     fileSize: bytes.length,
     mediaType: options.mediaType || '',
-    bytes: options.keepBytes === false ? new Uint8Array(0) : bytes,
+    bytes,
     digests,
   };
 }
 
-async function makeTextContext(text, options = {}) {
+async function makeTextContext(text) {
   const bytes = utf8ToBytes(text);
   const digests = await computeDigests(bytes);
   return {
     type: 'text',
     fileName: '',
     fileSize: bytes.length,
-    bytes: options.keepBytes === false ? new Uint8Array(0) : bytes,
+    bytes,
     digests,
   };
 }
@@ -193,25 +194,6 @@ function makeDeterministicBytes(size, seed) {
   return out;
 }
 
-function makePlaceholderDigests() {
-  const sha256Bytes = new Uint8Array(32);
-  const sha3Bytes = new Uint8Array(64);
-  return {
-    sha256: {
-      alg: HASH_ALG.SHA256,
-      bytes: sha256Bytes,
-      hex: bytesToHexLower(sha256Bytes),
-      base64: bytesToBase64(sha256Bytes),
-    },
-    sha3_512: {
-      alg: HASH_ALG.SHA3_512,
-      bytes: sha3Bytes,
-      hex: bytesToHexLower(sha3Bytes),
-      base64: bytesToBase64(sha3Bytes),
-    },
-  };
-}
-
 export async function runSelfTest() {
   const results = [];
 
@@ -220,6 +202,20 @@ export async function runSelfTest() {
       assertThrows(() => assertWebCryptoAvailable({ cryptoApi: {} }), 'subtle API is unavailable');
       assertWebCryptoAvailable({ cryptoApi: { subtle: {} } });
       await assertHashRuntimeHealth();
+      await assertEd25519RuntimeHealth();
+    }),
+
+    createResult('startup Ed25519 KAT rejects a provider that accepts every signature', async () => {
+      const subtle = globalThis.crypto.subtle;
+      const hadOwnVerify = Object.prototype.hasOwnProperty.call(subtle, 'verify');
+      const ownVerifyDescriptor = Object.getOwnPropertyDescriptor(subtle, 'verify');
+      try {
+        Object.defineProperty(subtle, 'verify', { configurable: true, writable: true, value: async () => true });
+        await assertRejects(() => assertEd25519RuntimeHealth(), 'Ed25519 startup verification accepted');
+      } finally {
+        if (hadOwnVerify) Object.defineProperty(subtle, 'verify', ownVerifyDescriptor);
+        else delete subtle.verify;
+      }
       await assertEd25519RuntimeHealth();
     }),
 
@@ -325,29 +321,20 @@ export async function runSelfTest() {
       );
     }),
 
-    createResult('streaming digest vectors and corpus', async () => {
+    createResult('SHA-256 provider vectors and SHA3-512 streaming corpus', async () => {
       const sha256Vectors = [
+        ['empty', new Uint8Array(0), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'],
+        ['abc', utf8ToBytes('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'],
         [
-          'empty',
-          new Uint8Array(0),
-          'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-        ],
-        [
-          'abc',
-          utf8ToBytes('abc'),
-          'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-        ],
-        [
-          'rfc4634 multi-block',
+          'FIPS 180-4 448-bit two-block',
           utf8ToBytes('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'),
           '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1',
         ],
       ];
-
       for (const [name, bytes, expectedHex] of sha256Vectors) {
-        const actualHex = bytesToHexLower(await digestWithChunks(() => createSha256Stream({ nativeThreshold: 0 }), bytes, [1, 7, 64, 3]));
+        const actualHex = bytesToHexLower(await sha256(bytes));
         if (actualHex !== expectedHex) {
-          throw new Error(`SHA-256 stream ${name}: expected ${expectedHex}, got ${actualHex}.`);
+          throw new Error(`SHA-256 ${name}: expected ${expectedHex}, got ${actualHex}.`);
         }
       }
 
@@ -365,16 +352,9 @@ export async function runSelfTest() {
         const size = sizeState % 16385;
         const bytes = makeDeterministicBytes(size, i + 1);
         const chunkSizes = [1 + (i % 17), 31 + (i % 97), 255 + (i % 251), 4096];
-
-        const oneShotSha256 = bytesToHexLower(await sha256(bytes));
-        const streamSha256 = bytesToHexLower(await digestWithChunks(() => createSha256Stream({ nativeThreshold: 0 }), bytes, chunkSizes));
-        if (streamSha256 !== oneShotSha256) {
-          throw new Error(`SHA-256 stream corpus mismatch at size ${size}.`);
-        }
-
-        const oneShotSha3 = bytesToHexLower(await sha3_512(bytes));
-        const streamSha3 = bytesToHexLower(await digestWithChunks(createSha3_512Stream, bytes, chunkSizes));
-        if (streamSha3 !== oneShotSha3) {
+        const oneShot = bytesToHexLower(await sha3_512(bytes, { implementation: 'fallback' }));
+        const streamed = bytesToHexLower(await digestWithChunks(createSha3_512Stream, bytes, chunkSizes));
+        if (streamed !== oneShot) {
           throw new Error(`SHA3-512 stream corpus mismatch at size ${size}.`);
         }
       }
@@ -394,15 +374,14 @@ export async function runSelfTest() {
       const progress = [];
       const streamed = await createFileInputContext(file, {
         chunkSize: 71,
-        keepBytes: false,
         onProgress(item) {
           progress.push(item.phase);
         },
       });
       const expected = await computeDigests(bytes);
 
-      if (streamed.bytes.length !== 0) {
-        throw new Error('Expected digest-only file context to avoid retaining bytes.');
+      if ('bytes' in streamed) {
+        throw new Error('File input context must not retain input bytes.');
       }
       if (streamed.digests.sha256.hex !== expected.sha256.hex) {
         throw new Error('Streamed file SHA-256 digest mismatch.');
@@ -414,15 +393,6 @@ export async function runSelfTest() {
         throw new Error(`Unexpected streamed file progress phases: ${progress.join(',')}.`);
       }
 
-      const buffered = await createFileInputContext(file, { chunkSize: 257, keepBytes: true });
-      if (buffered.bytes.length !== bytes.length) {
-        throw new Error('Expected buffered file context to retain bytes.');
-      }
-      for (let i = 0; i < bytes.length; i += 1) {
-        if (buffered.bytes[i] !== bytes[i]) {
-          throw new Error('Buffered file context byte mismatch.');
-        }
-      }
     }),
 
     createResult('file input context abort wipes active chunk', async () => {
@@ -448,7 +418,6 @@ export async function runSelfTest() {
       try {
         await createFileInputContext(file, {
           chunkSize: 1024,
-          keepBytes: true,
           signal: controller.signal,
           onProgress(item) {
             if (item.phase === 'read') controller.abort();
@@ -488,7 +457,7 @@ export async function runSelfTest() {
           },
         };
         await assertRejects(
-          () => createFileInputContext(file, { chunkSize: 32, keepBytes: true }),
+          () => createFileInputContext(file, { chunkSize: 32 }),
           'File read returned'
         );
       }
@@ -506,6 +475,14 @@ export async function runSelfTest() {
         },
       };
       await assertRejects(() => createFileInputContext(changingFile), 'File changed while it was being read');
+    }),
+
+    createResult('text input normalizes CRLF and CR to LF before hashing', async () => {
+      const normalized = await createTextInputContext('a\r\nb\rc\n');
+      const expected = await createTextInputContext('a\nb\nc\n');
+      if (normalized.fileSize !== 6 || normalized.digests.sha256.hex !== expected.digests.sha256.hex) {
+        throw new Error('Text newlines were not normalized to LF.');
+      }
     }),
 
     createResult('text input enforces UTF-8 byte limit and cooperative cancellation', async () => {
@@ -532,55 +509,6 @@ export async function runSelfTest() {
       });
       setTimeout(() => controller.abort(), 0);
       await assertRejects(() => pending, 'aborted');
-    }),
-
-    createResult('SEP-53 local signing avoids duplicate input buffer', async () => {
-      if (typeof process === 'undefined' || typeof process.memoryUsage !== 'function') {
-        return;
-      }
-
-      const size = 64 * 1024 * 1024;
-      const bytes = new Uint8Array(size);
-      for (let i = 0; i < bytes.length; i += 4096) {
-        bytes[i] = (i >>> 12) & 0xff;
-      }
-
-      const seed = hexToBytes('2222222222222222222222222222222222222222222222222222222222222222');
-      const inputContext = {
-        type: 'file',
-        fileName: 'large-sep53-memory.bin',
-        fileSize: bytes.length,
-        fileLastModified: 0,
-        bytes,
-        digests: makePlaceholderDigests(),
-      };
-
-      globalThis.gc?.();
-      const before = process.memoryUsage();
-      const result = await createLocalSep53MessageSignature({
-        inputContext,
-        seedBytes: seed,
-        signerAddress: '',
-      });
-      const after = process.memoryUsage();
-
-      if (!result.signatureB64 || result.signatureB64.length === 0) {
-        throw new Error('Expected large SEP-53 signature output.');
-      }
-
-      const heapDelta = after.heapUsed - before.heapUsed;
-      const heapLimit = 24 * 1024 * 1024;
-      if (heapDelta > heapLimit) {
-        throw new Error(`SEP-53 signing heap delta too high: ${heapDelta} bytes.`);
-      }
-
-      if (Number.isFinite(before.arrayBuffers) && Number.isFinite(after.arrayBuffers)) {
-        const arrayBufferDelta = after.arrayBuffers - before.arrayBuffers;
-        const arrayBufferLimit = 16 * 1024 * 1024;
-        if (arrayBufferDelta > arrayBufferLimit) {
-          throw new Error(`SEP-53 signing ArrayBuffer delta too high: ${arrayBufferDelta} bytes.`);
-        }
-      }
     }),
 
     createResult('strkey roundtrip', async () => {
@@ -681,6 +609,42 @@ export async function runSelfTest() {
       );
     }),
 
+    createResult('core copies never alias or wipe caller buffers (Node Buffer inputs)', async () => {
+      if (typeof Buffer === 'undefined') return;
+      const seed = Buffer.alloc(32, 0x42);
+      await derivePublicKeyFromSeed(seed);
+      (await createSigningKeySession(seed)).destroy();
+      if (seed.some((byte) => byte !== 0x42)) throw new Error('Caller seed buffer was modified.');
+      const publicKey = Buffer.from('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a', 'hex');
+      const original = Buffer.from(publicKey);
+      assertStrictEd25519PublicKey(publicKey);
+      const hint = signatureHint(publicKey);
+      hint.fill(0);
+      if (!publicKey.equals(original)) throw new Error('Caller public key buffer was modified.');
+    }),
+
+    createResult('seed import with the matching public key never exports the private key', async () => {
+      const subtle = globalThis.crypto.subtle;
+      const seed = hexToBytes('9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60');
+      const publicBytes = hexToBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a');
+      const observed = [];
+      const auditingSubtle = {
+        importKey(format, keyData, algorithm, extractable, usages) {
+          if (format === 'pkcs8' && extractable) observed.push('extractable private import');
+          return subtle.importKey(format, keyData, algorithm, extractable, usages);
+        },
+        exportKey(format, key) {
+          observed.push(`export ${format}`);
+          return subtle.exportKey(format, key);
+        },
+        sign: subtle.sign.bind(subtle),
+        verify: subtle.verify.bind(subtle),
+      };
+      const session = await createSigningKeySession(seed, { publicBytes, subtle: auditingSubtle });
+      session.destroy();
+      if (observed.length) throw new Error(`Private key material left the provider: ${observed.join(', ')}.`);
+    }),
+
     createResult('generated signing session rejects a mismatched supplied public key', async () => {
       const seedA = hexToBytes('0303030303030303030303030303030303030303030303030303030303030303');
       const seedB = hexToBytes('0404040404040404040404040404040404040404040404040404040404040404');
@@ -728,6 +692,25 @@ export async function runSelfTest() {
         () => assertStrictEd25519Signature(signature),
         'strict Ed25519 policy rejects signature R'
       );
+    }),
+
+    createResult('strict signature policy rejections are reported with their reason', async () => {
+      const { doc, inputContext } = await makeSignedTextFixture('explicit strict-policy diagnostics');
+      const signature = base64ToBytes(doc.signatureB64);
+      const mixedOrderR = signature.slice();
+      mixedOrderR.set(hexToBytes('9599999999999999999999999999999999999999999999999999999999999999'), 0);
+      const nonCanonicalS = signature.slice();
+      nonCanonicalS.set(hexToBytes('edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010'), 32);
+      for (const [bytes, reason] of [[mixedOrderR, 'rejects signature R'], [nonCanonicalS, 'scalar S is not canonical']]) {
+        const verify = await verifyDetachedSignature({
+          signatureDoc: { ...doc, signatureB64: bytesToBase64(bytes) },
+          inputContext,
+          expectedSigner: doc.signer,
+        });
+        if (verify.signatureValid || !verify.errors.some((line) => line.includes(reason))) {
+          throw new Error(`Expected explicit "${reason}" diagnostic, got: ${verify.errors.join(' | ')}`);
+        }
+      }
     }),
 
     createResult('canonical JSON rejects non-I-JSON values', async () => {
@@ -811,6 +794,44 @@ export async function runSelfTest() {
       if (!verify.signatureValid || verify.inputMatches !== false || verify.contextMatches !== true || verify.summary !== 'MISMATCH') {
         throw new Error(`Expected valid-signature/input-mismatch outcome, got ${JSON.stringify(verify)}`);
       }
+    }),
+
+    createResult('v3 without an expected signer reports the signer as unverified, not valid', async () => {
+      const { doc, inputContext } = await makeSignedTextFixture('self-asserted signer regression');
+      for (const expectedSigner of ['', '   ']) {
+        const verify = await verifyDetachedSignature({ signatureDoc: doc, inputContext, expectedSigner });
+        if (verify.valid || verify.summary !== 'SIGNER_UNCONFIRMED' || !verify.signatureValid) {
+          throw new Error(`Expected SIGNER_UNCONFIRMED without an expected signer, got ${verify.summary}.`);
+        }
+        if (verify.inputMatches !== true || verify.contextMatches !== null) {
+          throw new Error('Signer identity must be NOT CHECKED when no expectation is supplied.');
+        }
+      }
+      const anchored = await verifyDetachedSignature({ signatureDoc: doc, inputContext, expectedSigner: doc.signer });
+      if (!anchored.valid || anchored.summary !== 'VALID') throw new Error(`Expected VALID, got ${anchored.summary}.`);
+    }),
+
+    createResult('v3 file names match under Unicode NFC normalization only', async () => {
+      const seed = hexToBytes('2424242424242424242424242424242424242424242424242424242424242424');
+      const bytes = utf8ToBytes('normalization');
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: await makeFileContext('cafe\u0301.txt', bytes),
+        seedBytes: seed,
+        signerAddress: '',
+      });
+      if (signResult.doc.protected.input.name !== 'caf\u00e9.txt') throw new Error('Signed file name is not NFC.');
+      const nfc = await verifyDetachedSignature({
+        signatureDoc: signResult.doc,
+        inputContext: await makeFileContext('caf\u00e9.txt', bytes),
+        expectedSigner: signResult.signer,
+      });
+      if (!nfc.valid) throw new Error(`Expected canonically equivalent name to match, got ${nfc.summary}.`);
+      const other = await verifyDetachedSignature({
+        signatureDoc: signResult.doc,
+        inputContext: await makeFileContext('cafe.txt', bytes),
+        expectedSigner: signResult.signer,
+      });
+      if (other.summary !== 'MISMATCH') throw new Error(`Expected a different name to mismatch, got ${other.summary}.`);
     }),
 
     createResult('v3 treats browser file media type as signed advisory metadata', async () => {
@@ -916,7 +937,7 @@ export async function runSelfTest() {
       if (verify.summary !== 'INVALID') throw new Error(`Expected INVALID, got ${verify.summary}.`);
     }),
 
-    ...['', 'stellar-signature/v1', 'stellar-signature/v2', 'stellar-signature/v2 ', 'STELLAR-SIGNATURE/V2'].map((schema) =>
+    ...['', 'stellar-signature/v1', 'stellar-signature/v2', 'stellar-signature/v2 ', 'stellar-signature/v3 ', 'STELLAR-SIGNATURE/V3'].map((schema) =>
       createResult(`strict verifier rejects schema ${JSON.stringify(schema)}`, async () => {
         const { doc, inputContext } = await makeSignedTextFixture('schema strictness regression');
         const verify = await verifyDetachedSignature({
@@ -942,6 +963,16 @@ export async function runSelfTest() {
         'Duplicate JSON member: schema'
       );
       assertThrows(() => safeJsonParse('{"value":1e400}'), 'non-finite');
+      safeJsonParse(`${'['.repeat(16)}${']'.repeat(16)}`, { maxDepth: 16 });
+      assertThrows(() => safeJsonParse(`${'['.repeat(17)}${']'.repeat(17)}`, { maxDepth: 16 }), 'nesting exceeds 16');
+      assertThrows(() => safeJsonParse(`{"a":${'{"a":'.repeat(16)}1${'}'.repeat(16)}}`, { maxDepth: 16 }), 'nesting exceeds 16');
+    }),
+
+    createResult('signature container text must be strict UTF-8 without BOM', async () => {
+      if (decodeUtf8Strict(utf8ToBytes('{"a":"\u00e9"}')) !== '{"a":"\u00e9"}') throw new Error('Valid UTF-8 was not decoded.');
+      assertThrows(() => decodeUtf8Strict(concatBytes(new Uint8Array([0xef, 0xbb, 0xbf]), utf8ToBytes('{}'))), 'byte-order mark');
+      assertThrows(() => decodeUtf8Strict(new Uint8Array([0x7b, 0x22, 0xff, 0x22, 0x7d])), 'not valid UTF-8');
+      assertThrows(() => decodeUtf8Strict(new Uint8Array([0xed, 0xa0, 0x80])), 'not valid UTF-8');
     }),
 
     createResult('v3 protected manifest sign/verify empty text', async () => {
@@ -1166,11 +1197,7 @@ export async function runSelfTest() {
     createResult('XDR hyper sequence uses signed two-complement int64 semantics', async () => {
       const sourcePublicKey = new Uint8Array(32);
       const dataValue = new Uint8Array(32);
-      const build = (sequence) => buildUnsignedManageDataEnvelope({
-        sourcePublicKey,
-        sequence,
-        manageDataEntries: [{ dataName: MANAGE_DATA_NAME.MANIFEST_SHA256, dataValue }],
-      });
+      const build = (sequence) => buildUnsignedManifestEnvelope({ sourcePublicKey, sequence, manifestDigest: dataValue });
 
       for (const sequence of [-(1n << 63n), -1n, 0n, (1n << 63n) - 1n]) {
         const parsed = parseTransactionEnvelope(build(sequence).envelopeXdr);
@@ -1302,6 +1329,52 @@ export async function runSelfTest() {
           }),
         'padding bytes must be zero'
       );
+    }),
+
+    createResult('XDR ManageData names must be printable ASCII (BOM, UTF-8, controls rejected)', async () => {
+      const context = await makeTextContext('ascii data name');
+      const fixture = await makeXdrFixture(
+        '3636363636363636363636363636363636363636363636363636363636363636',
+        context
+      );
+      const name = utf8ToBytes(MANAGE_DATA_NAME.MANIFEST_SHA256);
+      const withName = (nameBytes) => {
+        const tx = fixture.draft.txXdr;
+        const offset = indexOfBytes(tx, name);
+        const pad = (bytes) => new Uint8Array((4 - (bytes.length % 4)) % 4);
+        return concatBytes(
+          tx.subarray(0, offset - 4),
+          uint32Bytes(nameBytes.length),
+          nameBytes,
+          pad(nameBytes),
+          tx.subarray(offset + name.length + pad(name).length)
+        );
+      };
+      const variants = [
+        concatBytes(new Uint8Array([0xef, 0xbb, 0xbf]), name), // UTF-8 BOM, previously stripped by the decoder
+        concatBytes(name, new Uint8Array([0x7f])),
+        concatBytes(name, new Uint8Array([0x0a])),
+        concatBytes(name, utf8ToBytes('\u00e9')),
+      ];
+      for (const variant of variants) {
+        const tx = withName(variant);
+        assertThrows(() => parseTransactionEnvelope(concatBytes(uint32Bytes(2), tx, uint32Bytes(0))), 'printable ASCII');
+      }
+
+      // End to end: a correctly signed proof whose data name carries a BOM must not verify.
+      const bomTx = withName(variants[0]);
+      const bomHash = await computeTransactionHash(bomTx, TESTNET_NETWORK_PASSPHRASE);
+      const bomXdr = bytesToBase64(
+        encodeSignedTxEnvelope({ txXdr: bomTx, signatures: [{ hint: fixture.hint, signature: await signBytesWithSeed(fixture.seed, bomHash) }] })
+      );
+      const verify = await verifyDetachedSignature({
+        signatureDoc: { schema: SIGNATURE_SCHEMA_V3, signer: fixture.signer, protected: fixture.draft.protectedManifest, signedXdr: bomXdr },
+        inputContext: context,
+        expectedSigner: fixture.signer,
+      });
+      if (verify.signatureValid || !verify.errors.some((line) => line.includes('printable ASCII'))) {
+        throw new Error(`BOM-prefixed ManageData name was not rejected: ${verify.summary}`);
+      }
     }),
 
     createResult('XDR parser rejects non-canonical base64 whitespace', async () => {

@@ -12,6 +12,7 @@ import { HASH_ALG, MANAGE_DATA_NAME, TESTNET_NETWORK_PASSPHRASE } from '../src/c
 import { derivePublicKeyFromSeed, signBytesWithSeed, signatureHint } from '../src/core/ed25519.js';
 import { decodeEd25519SecretSeed, encodeEd25519PublicKey } from '../src/core/strkey.js';
 import { computeTransactionHash, encodeSignedTxEnvelope } from '../src/core/xdr.js';
+import { verifyDetachedSignature } from '../src/core/verify.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -265,8 +266,20 @@ async function buildVectors() {
   };
 }
 
+async function assertVectorsVerify(data) {
+  for (const vector of data.vectors) {
+    if (!vector.doc) continue;
+    const content = vector.input.type === 'text' ? vector.input.text : vector.input.fileContentUtf8;
+    const inputContext =
+      vector.input.type === 'text' ? await makeTextContext(content) : await makeFileContext(vector.input.fileName, utf8ToBytes(content));
+    const report = await verifyDetachedSignature({ signatureDoc: vector.doc, inputContext, expectedSigner: vector.signer });
+    if (report.summary !== 'VALID') throw new Error(`${vector.id}: generated vector does not verify (${report.summary}).`);
+  }
+}
+
 async function main() {
   const data = await buildVectors();
+  await assertVectorsVerify(data);
   const out = `${JSON.stringify(data, null, 2)}\n`;
   await writeFile(path.join(root, 'test-vectors.json'), out, 'utf8');
   console.log('Generated test-vectors.json');

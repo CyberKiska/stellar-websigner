@@ -31,6 +31,7 @@ async function main() {
 async function runScriptSelfTests() {
   const tests = [
     ['security headers and meta CSP', assertSecurityHeaders],
+    ['form controls opt out of browser form-state persistence', assertFormControlsNotPersisted],
     ['development server path containment', assertDevServerPathContainment],
     ['test build output variant containment', assertBuildVariantContainment],
     ['artifact manifest exact-set and digest verification', assertArtifactManifestVerification],
@@ -100,6 +101,19 @@ async function assertDevServerPathContainment() {
   }
 }
 
+async function assertFormControlsNotPersisted() {
+  const html = await readFile(path.join(root, 'src', 'index.html'), 'utf8');
+  const controls = html.match(/<(?:input|textarea|select)\b[^>]*>/g) || [];
+  if (controls.length === 0) throw new Error('No form controls found.');
+  for (const control of controls) {
+    // Browsers save state of controls without autocomplete="off" for session restore and history.
+    if (!/\sautocomplete="off"/.test(control)) throw new Error(`Form control lacks autocomplete="off": ${control}`);
+  }
+  if (/<(?:input|textarea)\b[^>]*id="keys-generated-seed"/.test(html)) {
+    throw new Error('The generated secret seed must not be rendered into a form control.');
+  }
+}
+
 async function assertSecurityHeaders() {
   const html = await readFile(path.join(root, 'src', 'index.html'), 'utf8');
   const match = html.match(/http-equiv="Content-Security-Policy"\s+content="([^"]+)"/);
@@ -120,6 +134,13 @@ async function assertSecurityHeaders() {
   if (!HTTP_CSP.includes("frame-ancestors 'none'")) {
     throw new Error('HTTP CSP missing frame-ancestors.');
   }
+  const headers = Object.fromEntries(SECURITY_HEADERS);
+  const hsts = headers['Strict-Transport-Security'] || '';
+  const maxAge = Number(hsts.match(/max-age=(\d+)/)?.[1] || 0);
+  if (maxAge < 31536000 || !hsts.includes('includeSubDomains')) {
+    throw new Error('Strict-Transport-Security must be at least one year and include subdomains.');
+  }
+  if (headers['X-Content-Type-Options'] !== 'nosniff') throw new Error('X-Content-Type-Options: nosniff is required.');
   const headerText = securityHeadersText();
   for (const [name, value] of SECURITY_HEADERS) {
     if (!headerText.includes(`  ${name}: ${value}`)) {

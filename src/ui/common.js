@@ -1,4 +1,4 @@
-import { bytesToUtf8, wipeBytes } from '../core/bytes.js';
+import { decodeUtf8Strict, wipeBytes } from '../core/bytes.js';
 
 export function byId(id) {
   const el = document.getElementById(id);
@@ -73,7 +73,8 @@ export async function readFileText(file, { maxBytes = 256 * 1024 } = {}) {
     if (bytes.length !== file.size || bytes.length > maxBytes) {
       throw new Error('Signature file size changed while reading.');
     }
-    return bytesToUtf8(bytes);
+    // Blob.text() would silently drop a BOM and replace invalid UTF-8; reject both instead.
+    return decodeUtf8Strict(bytes);
   } finally {
     wipeBytes(bytes);
   }
@@ -84,10 +85,6 @@ export function appendLog(textarea, message) {
   const line = `[${prefix}] ${message}`;
   textarea.value = textarea.value ? `${textarea.value}\n${line}` : line;
   textarea.scrollTop = textarea.scrollHeight;
-}
-
-export function clearLog(textarea) {
-  textarea.value = '';
 }
 
 export function friendlyError(error) {

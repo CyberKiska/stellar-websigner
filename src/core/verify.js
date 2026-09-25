@@ -1,10 +1,5 @@
-import {
-  MANAGE_DATA_NAME,
-  PROOF_TYPE,
-  SIGNATURE_SCHEMA_V3,
-} from './constants.js';
+import { PROOF_TYPE, SIGNATURE_SCHEMA_V3 } from './constants.js';
 import { assertStrictEd25519PublicKey } from './ed25519-validation.js';
-import { knownNetworkPassphrases } from './network.js';
 import {
   assertExactKeys,
   compareProtectedManifestInput,
@@ -12,10 +7,11 @@ import {
   protectedManifestSha256,
   validateProtectedManifestStructure,
 } from './protected-manifest.js';
+import { knownNetworkPassphrases } from './network.js';
 import { parseSep53Signature, verifySep53Message } from './sep53.js';
 import { decodeEd25519PublicKey, encodeEd25519PublicKey } from './strkey.js';
 import {
-  assertSafeManageDataEnvelope,
+  assertManifestProofEnvelope,
   computeTransactionHash,
   findValidDecoratedSignature,
   parseTransactionEnvelope,
@@ -118,9 +114,7 @@ async function verifyV3Xdr({ report, signatureDoc, signer }) {
   const manifestDigest = await protectedManifestSha256(signatureDoc.protected);
   let safe;
   try {
-    safe = assertSafeManageDataEnvelope(parsed, {
-      expectedEntries: [{ dataName: MANAGE_DATA_NAME.MANIFEST_SHA256, dataValue: manifestDigest }],
-    });
+    safe = assertManifestProofEnvelope(parsed, manifestDigest);
   } catch (err) {
     report.fail(err.message);
     return false;
@@ -277,12 +271,13 @@ export function validateInputContext(inputContext) {
 }
 
 export function diagnosticsForDisplay(report) {
+  const unauthenticated = report.signatureValid ? '' : ' (claimed, not authenticated)';
   const lines = [
     `Result: ${report.summary || (report.valid ? 'VALID' : 'INVALID')}`,
     `Signature Valid: ${report.signatureValid ? 'YES' : 'NO'}`,
     `Selected Input Matches: ${formatCheckState(report.inputMatches)}`,
     `Expected Signer Matches: ${report.signatureValid && report.contextMatches === null ? 'NOT SUPPLIED' : formatCheckState(report.contextMatches)}`,
-    `Signer: ${report.signer || '-'}`,
+    `Signer${unauthenticated}: ${report.signer || '-'}`,
     `Schema: ${report.checked?.schema || '-'}`,
     `Proof Type: ${report.checked?.proofType || '-'}`,
     `Payload Type: ${report.checked?.payloadType || '-'}`,
@@ -290,7 +285,7 @@ export function diagnosticsForDisplay(report) {
     `Mode: ${report.checked?.mode || '-'}`,
   ];
   if (report.checked?.hashes?.length) {
-    lines.push('Hashes:');
+    lines.push(`Hashes${unauthenticated}:`);
     for (const item of report.checked.hashes) lines.push(`  ${item.alg}: ${item.hex}`);
   } else lines.push('Hashes: -');
   if (Number.isInteger(report.checked?.messageBytesLength)) lines.push(`Signed Manifest Bytes: ${report.checked.messageBytesLength}`);

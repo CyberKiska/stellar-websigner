@@ -1,7 +1,7 @@
 import { assertIJsonUnicode, assertWellFormedUnicode } from './canonical-json.js';
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+const strictUtf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 export function utf8ToBytes(value) {
   const text = String(value);
@@ -9,8 +9,16 @@ export function utf8ToBytes(value) {
   return textEncoder.encode(text);
 }
 
-export function bytesToUtf8(bytes) {
-  return textDecoder.decode(bytes);
+// Signature documents must be exactly UTF-8 without a byte-order mark (RFC 8259 section 8.1, RFC 7493).
+export function decodeUtf8Strict(bytes) {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    throw new Error('Text must not start with a byte-order mark.');
+  }
+  try {
+    return strictUtf8Decoder.decode(bytes);
+  } catch {
+    throw new Error('Text is not valid UTF-8.');
+  }
 }
 
 export function bytesToHexLower(bytes) {
@@ -98,8 +106,7 @@ export function base64ToBytes(base64Value) {
 
   if (typeof Buffer !== 'undefined') {
     try {
-      const buf = Buffer.from(normalized, 'base64');
-      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      return new Uint8Array(Buffer.from(normalized, 'base64'));
     } catch {
       throw new Error('Invalid base64 value.');
     }
@@ -127,18 +134,10 @@ export function canonicalBase64ToBytes(base64Value, { maxBytes = Number.POSITIVE
   return out;
 }
 
-export function normalizeBase64(base64Value, options) {
-  return bytesToBase64(canonicalBase64ToBytes(base64Value, options));
-}
-
 export function base64UrlToBytes(value) {
   let normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
   while (normalized.length % 4 !== 0) normalized += '=';
   return base64ToBytes(normalized);
-}
-
-export function bytesToBase64Url(bytes) {
-  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 export function concatBytes(...parts) {
@@ -166,12 +165,6 @@ export function wipeBytes(value) {
   if (value instanceof Uint8Array) {
     value.fill(0);
   }
-}
-
-export function shortHex(value, prefix = 10, suffix = 10) {
-  const hex = typeof value === 'string' ? value.toLowerCase() : bytesToHexLower(value);
-  if (hex.length <= prefix + suffix) return hex;
-  return `${hex.slice(0, prefix)}...${hex.slice(hex.length - suffix)}`;
 }
 
 export function safeJsonParse(text, { maxLength = 256 * 1024, maxDepth = 16 } = {}) {
@@ -219,7 +212,6 @@ function scanJson(source, maxDepth) {
   }
 
   function parseValue(depth) {
-    if (depth > maxDepth) throw new Error(`JSON nesting exceeds ${maxDepth} levels.`);
     skipWhitespace();
     const token = source[offset];
     if (token === '{') return parseObject(depth + 1);
@@ -237,6 +229,7 @@ function scanJson(source, maxDepth) {
   }
 
   function parseObject(depth) {
+    if (depth > maxDepth) throw new Error(`JSON nesting exceeds ${maxDepth} levels.`);
     offset += 1;
     skipWhitespace();
     const names = new Set();
@@ -266,6 +259,7 @@ function scanJson(source, maxDepth) {
   }
 
   function parseArray(depth) {
+    if (depth > maxDepth) throw new Error(`JSON nesting exceeds ${maxDepth} levels.`);
     offset += 1;
     skipWhitespace();
     if (source[offset] === ']') {

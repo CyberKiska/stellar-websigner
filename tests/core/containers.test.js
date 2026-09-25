@@ -182,7 +182,7 @@ test('malformed UTF-8 signature files are rejected instead of repaired', async (
   assert.deepEqual(safeJsonParse(await readFileText(new File([encoded], 'valid.sig'))), signed.doc);
   const bom = new File([Buffer.from([0xef, 0xbb, 0xbf]), encoded], 'bom.sig');
   assert.throws(() => safeJsonParse('\ufeff' + signed.json), /Malformed JSON/);
-  assert.equal((await readFileText(bom)).codePointAt(0), 0xfeff);
+  await assert.rejects(() => readFileText(bom), /byte-order mark/);
 });
 
 test('legacy content-only signatures and permissive verifier options cannot bypass v3 requirements', async () => {

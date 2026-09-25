@@ -1,5 +1,5 @@
 import { registerSessionWipeHandler } from '../app/session-wipe.js';
-import { base64ToBytes, wipeBytes } from '../core/bytes.js';
+import { base64ToBytes, bytesToBase64, bytesToHexLower } from '../core/bytes.js';
 import { PROOF_TYPE, PUBLIC_NETWORK_PASSPHRASE } from '../core/constants.js';
 import { buildProtectedManifest, compareProtectedManifestInput } from '../core/protected-manifest.js';
 import {
@@ -47,6 +47,7 @@ export function setupSignTab(state) {
   const xdrCreateBtn = byId('sign-xdr-create');
   const xdrUnsignedXdrEl = byId('sign-xdr-unsigned-xdr');
   const xdrSignedXdrEl = byId('sign-xdr-signed-xdr');
+  const xdrManifestDigestEl = byId('sign-xdr-manifest-digest');
 
   const outputSignerEl = byId('sign-output-signer');
   const outputProfileEl = byId('sign-output-profile');
@@ -124,6 +125,7 @@ export function setupSignTab(state) {
   function resetXdrDraft() {
     state.sign.xdrDraft = null;
     xdrUnsignedXdrEl.value = '';
+    xdrManifestDigestEl.textContent = '';
     xdrSignedXdrEl.value = '';
     updateActionAvailability();
   }
@@ -206,14 +208,7 @@ export function setupSignTab(state) {
     throw signal.reason instanceof Error ? signal.reason : makeAbortError();
   }
 
-  function wipeInputBytes(context) {
-    if (context?.bytes instanceof Uint8Array) {
-      wipeBytes(context.bytes);
-    }
-  }
-
   function clearCurrentInputContext() {
-    wipeInputBytes(state.sign.inputContext);
     state.sign.inputContext = null;
     renderDigests(null);
   }
@@ -243,7 +238,7 @@ export function setupSignTab(state) {
     );
   }
 
-  async function buildInputContext({ strict = false, requireBytes = false, signal = null } = {}) {
+  async function buildInputContext({ strict = false, signal = null } = {}) {
     const mode = getInputMode();
     throwIfAborted(signal);
 
@@ -256,7 +251,6 @@ export function setupSignTab(state) {
 
       const context = await createFileInputContext(file, {
         onProgress: setHashProgress,
-        keepBytes: requireBytes,
         signal,
       });
       throwIfAborted(signal);
@@ -271,7 +265,7 @@ export function setupSignTab(state) {
       return null;
     }
     resetHashProgress();
-    return createTextInputContext(text, { keepBytes: requireBytes, signal });
+    return createTextInputContext(text, { signal });
   }
 
   async function refreshDigestContext({ strict = false, silent = false } = {}) {
@@ -280,7 +274,7 @@ export function setupSignTab(state) {
     contextBusy = true;
     updateActionAvailability();
     try {
-      const context = await buildInputContext({ strict, requireBytes: false, signal: controller.signal });
+      const context = await buildInputContext({ strict, signal: controller.signal });
       if (nonce !== refreshNonce) return null;
 
       clearCurrentInputContext();
@@ -375,44 +369,41 @@ export function setupSignTab(state) {
       proofType: PROOF_TYPE.SEP53_MESSAGE,
     });
 
-    let context = null;
-    try {
-      context = await buildInputContext({ strict: true, requireBytes: false, signal });
-      throwIfAborted(signal);
-      const comparison = compareProtectedManifestInput({ manifest: reviewedManifest, inputContext: context });
-      if (!comparison.matches || comparison.warnings.length > 0) {
-        clearCurrentInputContext();
-        resetXdrDraft();
-        state.sign.inputContext = context;
-        renderDigests(context);
-        throw new Error('Input changed since the displayed digests were prepared. Review the updated digests and sign again.');
-      }
-      setHashProgress({
-        phase: 'digest',
-        loaded: context.fileSize,
-        total: context.fileSize,
-        message: 'Signing content...',
-      });
-      const result = await createLocalSep53MessageSignature({
-        inputContext: context,
-        signingKeySession,
-        signerAddress: state.keys.signerAddress,
-      });
-      throwIfAborted(signal);
-      if (state.keys.signingKeySession !== signingKeySession || !signingKeySession.active) {
-        throw new Error('Signing key changed during the operation; result discarded.');
-      }
-
-      const signedHashes = result.doc.protected.hashes.map((item) => item.alg).join(', ');
-      setSignatureOutput(result, `Content signature created locally (${signedHashes}).`);
-      appendLog(logEl, `Local SEP-53 content signature created. signer=${result.signer} hashes=${signedHashes}`);
-      showToast('success', 'Content signature created.');
-    } finally {
-      wipeInputBytes(context);
+    resetOutput();
+    const context = await buildInputContext({ strict: true, signal });
+    throwIfAborted(signal);
+    const comparison = compareProtectedManifestInput({ manifest: reviewedManifest, inputContext: context });
+    if (!comparison.matches || comparison.warnings.length > 0) {
+      clearCurrentInputContext();
+      resetXdrDraft();
+      state.sign.inputContext = context;
+      renderDigests(context);
+      throw new Error('Input changed since the displayed digests were prepared. Review the updated digests and sign again.');
     }
+    setHashProgress({
+      phase: 'digest',
+      loaded: context.fileSize,
+      total: context.fileSize,
+      message: 'Signing content...',
+    });
+    const result = await createLocalSep53MessageSignature({
+      inputContext: context,
+      signingKeySession,
+      signerAddress: state.keys.signerAddress,
+    });
+    throwIfAborted(signal);
+    if (state.keys.signingKeySession !== signingKeySession || !signingKeySession.active) {
+      throw new Error('Signing key changed during the operation; result discarded.');
+    }
+
+    const signedHashes = result.doc.protected.hashes.map((item) => item.alg).join(', ');
+    setSignatureOutput(result, `Content signature created locally (${signedHashes}).`);
+    appendLog(logEl, `Local SEP-53 content signature created. signer=${result.signer} hashes=${signedHashes}`);
+    showToast('success', 'Content signature created.');
   }
 
   async function runXdrDraft() {
+    resetOutput();
     const epoch = operationEpoch;
     const signerAddress = state.keys.signerAddress || '';
     const context = await refreshDigestContext({ strict: true });
@@ -431,6 +422,11 @@ export function setupSignTab(state) {
 
     state.sign.xdrDraft = draft;
     xdrUnsignedXdrEl.value = draft.unsignedXdr;
+    xdrManifestDigestEl.textContent = [
+      `name:   ${draft.dataName}`,
+      `base64: ${bytesToBase64(draft.manifestDigest)}`,
+      `hex:    ${bytesToHexLower(draft.manifestDigest)}`,
+    ].join('\n');
     appendLog(
       logEl,
       `Unsigned XDR proof generated. operation=${draft.operationId} signer=${draft.signerAddress} network=public hashes=${draft.boundHashes.map((item) => item.alg).join(', ')}`
@@ -441,6 +437,7 @@ export function setupSignTab(state) {
   }
 
   async function runXdrProofCreate() {
+    resetOutput();
     const epoch = operationEpoch;
     const draft = state.sign.xdrDraft;
     const expectedSigner = state.keys.signerAddress;

@@ -9,7 +9,7 @@ import {
 import { canonicalJsonStringify } from './canonical-json.js';
 import { utf8ToBytes } from './bytes.js';
 import { sha256 } from './hash.js';
-import { buildHashEntriesFromDigests, buildInputDescriptor } from './message.js';
+import { buildHashEntriesFromDigests, buildInputDescriptor, normalizeFileName } from './message.js';
 import { networkHintFromPassphrase } from './network.js';
 
 const HASH_ALGORITHMS = Object.freeze([HASH_ALG.SHA256, HASH_ALG.SHA3_512]);
@@ -124,7 +124,7 @@ export function compareProtectedManifestInput({ manifest, inputContext }) {
 
   if (input.type !== inputContext.type) {
     errors.push(`Protected input type mismatch: signature requires ${input.type}, selected input is ${inputContext.type}.`);
-  } else if (input.type === 'file' && input.name !== String(inputContext.fileName || '')) {
+  } else if (input.type === 'file' && normalizeFileName(input.name) !== normalizeFileName(inputContext.fileName)) {
     errors.push(`Protected filename mismatch: expected ${input.name}, received ${inputContext.fileName || ''}.`);
   }
 

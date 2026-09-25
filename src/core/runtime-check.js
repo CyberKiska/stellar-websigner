@@ -1,6 +1,6 @@
 import { bytesEqual, hexToBytes, utf8ToBytes, wipeBytes } from './bytes.js';
 import { signBytesWithSeed, verifyBytesWithPublic } from './ed25519.js';
-import { createSha256Stream, sha256, sha3_512 } from './hash.js';
+import { createSha3_512Stream, sha256, sha3_512 } from './hash.js';
 
 export function assertWebCryptoAvailable(options = {}) {
   const cryptoApi = options.cryptoApi || globalThis.crypto;
@@ -20,18 +20,28 @@ export async function assertHashRuntimeHealth() {
       '10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0'
   );
   try {
-    const sha256Stream = createSha256Stream({ nativeThreshold: 0 });
-    sha256Stream.update(message);
-    const [sha256Actual, sha256Fallback, sha3Actual, sha3Fallback] = await Promise.all([
+    const [sha256Actual, sha3Actual, sha3Fallback] = await Promise.all([
       sha256(message),
-      sha256Stream.finish(),
       sha3_512(message),
       sha3_512(message, { implementation: 'fallback' }),
     ]);
     if (!bytesEqual(sha256Actual, expectedSha256)) throw new Error('SHA-256 startup KAT failed.');
-    if (!bytesEqual(sha256Fallback, expectedSha256)) throw new Error('Bundled SHA-256 startup KAT failed.');
     if (!bytesEqual(sha3Actual, expectedSha3)) throw new Error('SHA3-512 startup provider/fallback KAT failed.');
     if (!bytesEqual(sha3Fallback, expectedSha3)) throw new Error('Bundled SHA3-512 startup KAT failed.');
+
+    // FIPS 202 example (1600-bit 0xa3 message) through the streaming path used for content, split
+    // across a partial block and a multi-block remainder.
+    const sha3Stream = createSha3_512Stream();
+    const a3 = new Uint8Array(200).fill(0xa3);
+    sha3Stream.update(a3.subarray(0, 71));
+    sha3Stream.update(a3.subarray(71));
+    const expectedStreamed = hexToBytes(
+      'e76dfad22084a8b1467fcf2ffa58361bec7628edf5f3fdc0e4805dc48caeeca8' +
+        '1b7c13c30adf52a3659584739a2df46be589c51ca1a4a8416df6545a1ce8ba00'
+    );
+    if (!bytesEqual(await sha3Stream.finish(), expectedStreamed)) {
+      throw new Error('Streaming SHA3-512 startup KAT failed.');
+    }
   } finally {
     wipeBytes(message);
     wipeBytes(expectedSha256);
@@ -54,6 +64,16 @@ export async function assertEd25519RuntimeHealth() {
     if (!bytesEqual(signature, expected)) throw new Error('Ed25519 startup signing KAT failed.');
     if (!(await verifyBytesWithPublic(publicKey, message, expected))) {
       throw new Error('Ed25519 startup verification KAT failed.');
+    }
+    // Provider-negative cases: R and A are valid prime-order points and S stays canonical, so the
+    // application's strict pre-validation passes and only a conformant provider rejects them.
+    if (await verifyBytesWithPublic(publicKey, new Uint8Array([1]), expected)) {
+      throw new Error('Ed25519 startup verification accepted a signature for a different message.');
+    }
+    const tamperedS = expected.slice();
+    tamperedS[32] ^= 0x01;
+    if (await verifyBytesWithPublic(publicKey, message, tamperedS)) {
+      throw new Error('Ed25519 startup verification accepted a modified signature scalar.');
     }
     const identity = new Uint8Array(32);
     identity[0] = 1;

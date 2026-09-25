@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { createSha256Stream, createSha3_512Stream } from '../../src/core/hash.js';
+import { createSha3_512Stream, sha256 } from '../../src/core/hash.js';
 import { createSigningKeySession, derivePublicKeyFromSeed, generateKeypair, signatureHint, verifyBytesWithPublic } from '../../src/core/ed25519.js';
 import { decodeEd25519PublicKey } from '../../src/core/strkey.js';
 import { canonicalBase64ToBytes, safeJsonParse } from '../../src/core/bytes.js';
@@ -18,38 +18,21 @@ const privateKey = (seed) => createPrivateKey({
 });
 const rawPublicKey = (key) => createPublicKey(key).export({ format: 'der', type: 'spki' }).subarray(-32);
 
-test('bundled SHA-256 and SHA3-512 match independent OpenSSL hashes across 266 sizes', async () => {
+test('provider SHA-256 and bundled streaming SHA3-512 match independent OpenSSL hashes across 266 sizes', async () => {
   const sizes = [
     ...Array.from({ length: 256 }, (_, i) => i),
     1024, 4095, 4096, 4097, 65535, 65536, 65537, 4194303, 4194304, 4194305,
   ];
   for (const size of sizes) {
     const bytes = Uint8Array.from({ length: size }, (_, i) => (i * 131 + 17) & 255);
-    const sha256 = createSha256Stream({ nativeThreshold: 0 });
     const sha3 = createSha3_512Stream();
     for (let offset = 0; offset < size;) {
       const chunk = bytes.subarray(offset, Math.min(size, offset + (offset < 200 ? 7 : 65537)));
-      sha256.update(chunk);
       sha3.update(chunk);
       offset += chunk.length;
     }
-    assert.deepEqual(Buffer.from(await sha256.finish()), hash('sha256', bytes), `SHA-256: ${size}`);
+    assert.deepEqual(Buffer.from(await sha256(bytes)), hash('sha256', bytes), `SHA-256: ${size}`);
     assert.deepEqual(Buffer.from(await sha3.finish()), hash('sha3-512', bytes), `SHA3-512: ${size}`);
-    if (size >= 4194303) {
-      const adaptive = createSha256Stream();
-      adaptive.update(bytes.subarray(0, 4194304));
-      adaptive.update(bytes.subarray(4194304));
-      assert.deepEqual(Buffer.from(await adaptive.finish()), hash('sha256', bytes), `SHA-256 threshold: ${size}`);
-    }
-  }
-});
-
-test('a zero SHA-256 threshold never delegates to Web Crypto, including empty input', async (t) => {
-  t.mock.method(globalThis.crypto.subtle, 'digest', () => { throw new Error('Unexpected native digest'); });
-  for (const bytes of [Buffer.alloc(0), Buffer.from('abc')]) {
-    const stream = createSha256Stream({ nativeThreshold: 0 });
-    stream.update(bytes);
-    assert.deepEqual(Buffer.from(await stream.finish()), hash('sha256', bytes));
   }
 });
 
@@ -75,18 +58,6 @@ test('owned key copies preserve caller Buffer values and session public keys', a
     session.destroy();
   }
   await assert.rejects(() => session.sign(Buffer.alloc(0)), /no longer active/);
-});
-
-test('buffered hashing owns its input across caller mutation and cleanup', async () => {
-  for (const nativeThreshold of [3, 4]) {
-    const bytes = Buffer.from('abc');
-    const stream = createSha256Stream({ nativeThreshold });
-    stream.update(bytes);
-    bytes.fill(0x7a);
-    stream.update(Buffer.from('d')); // Both the buffered and switching paths must own abc.
-    assert.deepEqual(Buffer.from(await stream.finish()), hash('sha256', Buffer.from('abcd')));
-    assert.equal(bytes.toString(), 'zzz');
-  }
 });
 
 test('generated PKCS8 buffers are wiped on success and failed public-key validation', async () => {

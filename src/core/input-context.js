@@ -1,12 +1,11 @@
-import { bytesToBase64, bytesToHexLower, utf8ToBytes, wipeBytes } from './bytes.js';
-import { createSha256Stream, createSha3_512Stream } from './hash.js';
+import { utf8ToBytes, wipeBytes } from './bytes.js';
+import { createSha3_512Stream, digestSet, sha256 } from './hash.js';
 
-// Keep fallback SHA3-512 work slices short enough to yield regularly on the UI
-// thread. Web Crypto has no portable streaming digest API.
+// SHA3-512 is absorbed in short slices so the UI thread yields regularly. Web Crypto has no
+// incremental digest, so SHA-256 is computed once by the provider over the assembled input.
 const DEFAULT_CHUNK_SIZE = 512 * 1024;
 const DEFAULT_TEXT_CHUNK_SIZE = 64 * 1024;
-const MAX_BUFFERED_FILE_SIZE_BYTES = 32 * 1024 * 1024;
-const MAX_STREAMED_FILE_SIZE_BYTES = 64 * 1024 * 1024;
+export const MAX_FILE_INPUT_SIZE_BYTES = 64 * 1024 * 1024;
 export const MAX_TEXT_INPUT_SIZE_BYTES = 1024 * 1024;
 
 export async function createFileInputContext(file, options = {}) {
@@ -21,10 +20,8 @@ export async function createFileInputContext(file, options = {}) {
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
   const signal = options.signal || null;
   const chunkSize = Number.isInteger(options.chunkSize) && options.chunkSize > 0 ? options.chunkSize : DEFAULT_CHUNK_SIZE;
-  const keepBytes = options.keepBytes === true;
-  const maxFileSize = keepBytes ? MAX_BUFFERED_FILE_SIZE_BYTES : MAX_STREAMED_FILE_SIZE_BYTES;
-  if (totalSize > maxFileSize) {
-    throw new Error(`File is too large. Maximum supported size is ${maxFileSize} bytes.`);
+  if (totalSize > MAX_FILE_INPUT_SIZE_BYTES) {
+    throw new Error(`File is too large. Maximum supported size is ${MAX_FILE_INPUT_SIZE_BYTES} bytes.`);
   }
   throwIfAborted(signal);
 
@@ -35,15 +32,13 @@ export async function createFileInputContext(file, options = {}) {
     message: 'Preparing file read...',
   });
 
-  const { bytes, digests } = await readFileChunked(file, {
+  const digests = await readFileChunked(file, {
     total: totalSize,
     chunkSize,
-    keepBytes,
     onProgress,
     signal,
   });
   if (Number(file.size) !== totalSize) {
-    wipeBytes(bytes);
     wipeDigestSet(digests);
     throw new Error('File changed while it was being read.');
   }
@@ -61,19 +56,19 @@ export async function createFileInputContext(file, options = {}) {
     fileSize: totalSize,
     fileLastModified,
     mediaType,
-    bytes,
     digests,
   };
 }
 
 export async function createTextInputContext(text, options = {}) {
-  const value = String(text || '');
+  // HTML textarea API values normalize CRLF/CR to LF, but not every engine applies this to every
+  // insertion path (Linux WebKit keeps CR). Normalize here so sign and verify agree across engines.
+  const value = String(text || '').replace(/\r\n?/g, '\n');
   if (value.length > MAX_TEXT_INPUT_SIZE_BYTES) {
     throw new Error(`Text input is too large. Maximum supported UTF-8 size is ${MAX_TEXT_INPUT_SIZE_BYTES} bytes.`);
   }
   const bytes = utf8ToBytes(value);
   const fileSize = bytes.length;
-  const keepBytes = options.keepBytes === true;
   const signal = options.signal || null;
   const chunkSize =
     Number.isInteger(options.chunkSize) && options.chunkSize > 0 ? options.chunkSize : DEFAULT_TEXT_CHUNK_SIZE;
@@ -91,7 +86,6 @@ export async function createTextInputContext(text, options = {}) {
       fileSize,
       fileLastModified: 0,
       mediaType: 'text/plain;charset=utf-8',
-      bytes: keepBytes ? bytes.slice() : new Uint8Array(0),
       digests,
     };
   } catch (err) {
@@ -102,13 +96,10 @@ export async function createTextInputContext(text, options = {}) {
   }
 }
 
-async function readFileChunked(file, { total, chunkSize, keepBytes, onProgress, signal }) {
-  const sha256Stream = createSha256Stream({ nativeThreshold: 0 });
+async function readFileChunked(file, { total, chunkSize, onProgress, signal }) {
+  const content = new Uint8Array(total);
   const sha3Stream = createSha3_512Stream();
-  const out = keepBytes ? new Uint8Array(total) : new Uint8Array(0);
-  let sha256Bytes = null;
-  let sha3512Bytes = null;
-
+  let digests = null;
   let offset = 0;
   try {
     while (offset < total) {
@@ -123,11 +114,8 @@ async function readFileChunked(file, { total, chunkSize, keepBytes, onProgress, 
             `File read returned ${chunk.length} bytes for a ${expectedLength}-byte range; the file may have changed.`
           );
         }
-        sha256Stream.update(chunk);
         sha3Stream.update(chunk);
-        if (keepBytes) {
-          out.set(chunk, offset);
-        }
+        content.set(chunk, offset);
       } finally {
         wipeBytes(chunk);
       }
@@ -149,60 +137,26 @@ async function readFileChunked(file, { total, chunkSize, keepBytes, onProgress, 
       message: 'Finalizing SHA-256 and SHA3-512...',
     });
     throwIfAborted(signal);
-
-    [sha256Bytes, sha3512Bytes] = await Promise.all([sha256Stream.finish(), sha3Stream.finish()]);
+    digests = digestSet(await sha256(content), await sha3Stream.finish());
     throwIfAborted(signal);
-    return {
-      bytes: out,
-      digests: {
-        sha256: {
-          alg: 'SHA-256',
-          bytes: sha256Bytes,
-          hex: bytesToHexLower(sha256Bytes),
-          base64: bytesToBase64(sha256Bytes),
-        },
-        sha3_512: {
-          alg: 'SHA3-512',
-          bytes: sha3512Bytes,
-          hex: bytesToHexLower(sha3512Bytes),
-          base64: bytesToBase64(sha3512Bytes),
-        },
-      },
-    };
+    return digests;
   } catch (err) {
-    wipeBytes(out);
-    if (sha256Bytes) wipeBytes(sha256Bytes);
-    if (sha3512Bytes) wipeBytes(sha3512Bytes);
+    wipeDigestSet(digests);
     throw err;
+  } finally {
+    wipeBytes(content);
   }
 }
 
 async function computeDigestsCooperatively(bytes, { chunkSize, signal }) {
-  const sha256Stream = createSha256Stream({ nativeThreshold: 0 });
   const sha3Stream = createSha3_512Stream();
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
     throwIfAborted(signal);
-    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
-    sha256Stream.update(chunk);
-    sha3Stream.update(chunk);
+    sha3Stream.update(bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
     await yieldToEventLoop();
   }
   throwIfAborted(signal);
-  const [sha256Bytes, sha3512Bytes] = await Promise.all([sha256Stream.finish(), sha3Stream.finish()]);
-  return {
-    sha256: {
-      alg: 'SHA-256',
-      bytes: sha256Bytes,
-      hex: bytesToHexLower(sha256Bytes),
-      base64: bytesToBase64(sha256Bytes),
-    },
-    sha3_512: {
-      alg: 'SHA3-512',
-      bytes: sha3512Bytes,
-      hex: bytesToHexLower(sha3512Bytes),
-      base64: bytesToBase64(sha3512Bytes),
-    },
-  };
+  return digestSet(await sha256(bytes), await sha3Stream.finish());
 }
 
 function wipeDigestSet(digests) {

@@ -24,7 +24,7 @@ export function setupKeysTab(state) {
   const loadGBtn = byId('keys-load-g');
 
   const generateBtn = byId('keys-generate');
-  const copySeedBtn = byId('keys-copy-seed');
+  const generatedSeedToggle = byId('keys-generated-seed-toggle');
   const copyGBtn = byId('keys-copy-g');
 
   const exportBtn = byId('keys-export');
@@ -35,11 +35,14 @@ export function setupKeysTab(state) {
     isSecureContext: window.isSecureContext,
     buildPolicy: document.querySelector('meta[name="local-secret-operations"]')?.content,
   });
-  const secretMutationControls = [seedInput, seedToggle, loadSeedBtn, clearSeedFieldBtn, generateBtn, copySeedBtn];
+  const secretMutationControls = [seedInput, seedToggle, loadSeedBtn, clearSeedFieldBtn, generateBtn];
   const publicMutationControls = [gInput, loadGBtn];
   let keyOperationEpoch = 0;
   let keyOperationBusy = false;
+  // The generated seed is rendered as a text node only while revealed. Form controls are avoided on
+  // purpose: browsers persist their state for session restore, outside the application's control.
   let generatedSeedDisplay = '';
+  let generatedSeedRevealed = false;
 
   function updateKeyControls() {
     for (const control of secretMutationControls) {
@@ -49,6 +52,7 @@ export function setupKeysTab(state) {
       control.disabled = keyOperationBusy;
     }
     clearBtn.disabled = keyOperationBusy;
+    generatedSeedToggle.disabled = localSeedDisabled || keyOperationBusy || !generatedSeedDisplay;
     if (localSeedDisabled) {
       seedInput.placeholder = 'Disabled by deployment security policy';
       generateBtn.title = 'Local secret-key operations are disabled by deployment security policy.';
@@ -99,12 +103,22 @@ export function setupKeysTab(state) {
     state.keys.signerAddress = '';
     state.keys.source = 'none';
     generatedSeedDisplay = '';
+    generatedSeedRevealed = false;
     seedInput.value = '';
-    generatedSeedEl.value = '';
-    generatedGEl.value = '';
     seedInput.type = 'password';
-    generatedSeedEl.type = 'password';
     seedToggle.textContent = 'Show';
+    generatedSeedEl.textContent = '';
+    generatedGEl.value = '';
+    renderGeneratedSeed();
+  }
+
+  function renderGeneratedSeed() {
+    generatedSeedEl.textContent = generatedSeedDisplay && generatedSeedRevealed ? generatedSeedDisplay : '';
+    generatedSeedEl.dataset.emptyText = generatedSeedDisplay
+      ? 'Hidden. Select Reveal to display it for offline backup.'
+      : 'No generated seed';
+    generatedSeedToggle.textContent = generatedSeedRevealed ? 'Hide' : 'Reveal';
+    generatedSeedToggle.setAttribute('aria-expanded', String(generatedSeedRevealed));
   }
 
   function setState({ seedBytes = null, signingKeySession = null, signerAddress = '', source = 'none' }) {
@@ -123,8 +137,7 @@ export function setupKeysTab(state) {
   }
 
   function render() {
-    const seedVisible = state.keys.seedBytes && state.keys.source === 'generated-seed';
-    generatedSeedEl.value = seedVisible ? generatedSeedDisplay : '';
+    renderGeneratedSeed();
     generatedGEl.value = state.keys.signerAddress || '';
 
     const lines = [];
@@ -196,14 +209,13 @@ export function setupKeysTab(state) {
     try {
       seedBytes = decodeEd25519SecretSeed(seedStr);
       seedInput.value = '';
-      signingKeySession = await createSigningKeySession(seedBytes);
+      // With the matching G... supplied, the pair is proven by a sign/verify check and the private key
+      // is never exported. Without it, browsers lacking getPublicKey() must export a temporary JWK.
+      const existingG = gInput.value.trim();
+      const publicBytes = existingG ? decodeEd25519PublicKey(existingG) : undefined;
+      signingKeySession = await createSigningKeySession(seedBytes, { publicBytes });
       if (!keyOperationIsCurrent(epoch)) return false;
       const signer = encodeEd25519PublicKey(signingKeySession.publicBytes);
-
-      const existingG = gInput.value.trim();
-      if (existingG && existingG !== signer) {
-        throw new Error('G... field does not match signer derived from S...');
-      }
 
       setState({ signingKeySession, signerAddress: signer, source: 'imported-seed' });
       committed = true;
@@ -349,8 +361,10 @@ export function setupKeysTab(state) {
     showToast('info', 'Session cleared.');
   });
 
-  copySeedBtn.addEventListener('click', async () => {
-    showToast('warning', 'Secret clipboard export is disabled. Record the seed using an offline secure backup procedure.');
+  generatedSeedToggle.addEventListener('click', () => {
+    if (!generatedSeedDisplay) return;
+    generatedSeedRevealed = !generatedSeedRevealed;
+    renderGeneratedSeed();
   });
 
   copyGBtn.addEventListener('click', async () => {
@@ -365,7 +379,6 @@ export function setupKeysTab(state) {
   seedToggle.addEventListener('click', () => {
     const nextType = seedInput.type === 'password' ? 'text' : 'password';
     seedInput.type = nextType;
-    generatedSeedEl.type = nextType;
     seedToggle.textContent = nextType === 'password' ? 'Show' : 'Hide';
   });
 

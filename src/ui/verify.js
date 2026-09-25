@@ -4,7 +4,7 @@ import {
   createTextInputContext,
   MAX_TEXT_INPUT_SIZE_BYTES,
 } from '../core/input-context.js';
-import { safeJsonParse, wipeBytes } from '../core/bytes.js';
+import { safeJsonParse } from '../core/bytes.js';
 import { decodeEd25519PublicKey } from '../core/strkey.js';
 import { diagnosticsForDisplay, verifyDetachedSignature } from '../core/verify.js';
 import { byId, appendLog, copyText, friendlyError, readFileText, showToast } from './common.js';
@@ -33,6 +33,7 @@ export function setupVerifyTab(state) {
   const resultBadge = byId('verify-result-badge');
   const resultMessage = byId('verify-result-message');
   const resultSigner = byId('verify-result-signer');
+  const resultSignerLabel = byId('verify-result-signer-label');
   const resultChecked = byId('verify-result-checked');
   const resultDetails = byId('verify-details');
 
@@ -62,6 +63,7 @@ export function setupVerifyTab(state) {
     resultSigner.value = '';
     resultChecked.value = '';
     resultDetails.value = '';
+    resultSignerLabel.textContent = 'Signer';
     copySignerBtn.disabled = true;
   }
 
@@ -84,14 +86,7 @@ export function setupVerifyTab(state) {
     textGroupEl.classList.toggle('hidden', mode !== 'text');
   }
 
-  function wipeInputBytes(context) {
-    if (context?.bytes instanceof Uint8Array) {
-      wipeBytes(context.bytes);
-    }
-  }
-
   function clearInputContext() {
-    wipeInputBytes(state.verify.inputContext);
     state.verify.inputContext = null;
   }
 
@@ -194,7 +189,7 @@ export function setupVerifyTab(state) {
         if (strict) throw new Error('Select original file for verification.');
         return null;
       }
-      const context = await createFileInputContext(file, { keepBytes: false, onProgress: setProgress, signal });
+      const context = await createFileInputContext(file, { onProgress: setProgress, signal });
       throwIfAborted(signal);
       return context;
     }
@@ -204,7 +199,7 @@ export function setupVerifyTab(state) {
       if (strict) throw new Error('Enter original plain text for verification.');
       return null;
     }
-    return createTextInputContext(text, { keepBytes: false, signal });
+    return createTextInputContext(text, { signal });
   }
 
   async function refreshDigestContext({ strict = false, signal = null, silent = false } = {}) {
@@ -251,75 +246,61 @@ export function setupVerifyTab(state) {
     });
   }
 
+  function setResult(mode, title, badge, message) {
+    setResultCardMode(mode === 'neutral' ? null : mode);
+    resultTitle.textContent = title;
+    resultBadge.textContent = badge;
+    resultBadge.className = `badge ${mode}`;
+    resultBadge.setAttribute('aria-label', `Verification result: ${badge.toLowerCase()}`);
+    resultMessage.textContent = message;
+  }
+
   function renderReport(report) {
     resultCard.classList.remove('hidden');
+    // Metadata of a failed proof is attacker-controlled; never present it as the signer or checked data.
+    const authenticated = report.signatureValid === true;
+    resultSignerLabel.textContent = authenticated ? 'Signer' : 'Claimed Signer (not authenticated)';
     resultSigner.value = report.signer || '';
     copySignerBtn.disabled = !report.signer;
-
-    if (Array.isArray(report.checked?.hashes) && report.checked.hashes.length > 0) {
-      resultChecked.value = report.checked.hashes.map((item) => `${item.alg}: ${item.hex}`).join(' | ');
-    } else if (Number.isInteger(report.checked?.messageBytesLength)) {
-      resultChecked.value = `SEP-53 raw bytes: ${report.checked.messageBytesLength}`;
-    } else {
-      resultChecked.value = '-';
-    }
-
+    resultChecked.value =
+      authenticated && Array.isArray(report.checked?.hashes) && report.checked.hashes.length > 0
+        ? report.checked.hashes.map((item) => `${item.alg}: ${item.hex}`).join(' | ')
+        : '-';
     resultDetails.value = diagnosticsForDisplay(report);
 
-    if (report.signatureValid && (report.inputMatches === false || report.contextMatches === false)) {
-      setResultCardMode('warning');
-      resultTitle.textContent = 'Valid Signature, Context Mismatch';
-      resultBadge.textContent = 'MISMATCH';
-      resultBadge.className = 'badge warning';
-      resultBadge.setAttribute('aria-label', 'Verification result: valid signature with context mismatch');
-      resultMessage.textContent =
-        report.contextErrors?.[0] ||
-        report.inputErrors?.[0] ||
-        'The signature is cryptographically valid, but it is not valid for the selected input or expected signer.';
-      showToast('warning', 'Signature valid; selected verification context does not match.');
-      return;
-    }
-
-    if (report.summary === 'SIGNER_UNCONFIRMED') {
-      setResultCardMode('warning');
-      resultTitle.textContent = 'Signature Valid, Signer Unconfirmed';
-      resultBadge.textContent = 'UNCONFIRMED';
-      resultBadge.className = 'badge warning';
-      resultBadge.setAttribute('aria-label', 'Verification result: signer identity not confirmed');
-      resultMessage.textContent = 'The content matches this signature. Supply an independently trusted expected signer to confirm who signed it.';
-      showToast('warning', 'Content signature verified; signer identity is unconfirmed.');
-      return;
-    }
-
-    if (report.valid) {
-      if (Array.isArray(report.warnings) && report.warnings.length > 0) {
-        setResultCardMode('warning');
-        resultTitle.textContent = 'Verification Warning';
-        resultBadge.textContent = 'WARNING';
-        resultBadge.className = 'badge warning';
-        resultBadge.setAttribute('aria-label', 'Verification result: warning');
-        resultMessage.textContent = report.warnings[0];
+    switch (report.summary) {
+      case 'VALID':
+        setResult('valid', 'Signature Valid', 'VALID', 'Signature is valid for the selected input and the expected signer.');
+        showToast('success', 'Verification successful.');
+        return;
+      case 'VALID_WITH_WARNINGS':
+        setResult('warning', 'Verification Warning', 'WARNING', report.warnings[0]);
         showToast('warning', 'Verification completed with warnings.');
         return;
-      }
-
-      setResultCardMode('valid');
-      resultTitle.textContent = 'Signature Valid';
-      resultBadge.textContent = 'VALID';
-      resultBadge.className = 'badge valid';
-      resultBadge.setAttribute('aria-label', 'Verification result: valid');
-      resultMessage.textContent = 'Signature is valid for the supplied input and signer.';
-      showToast('success', 'Verification successful.');
-      return;
+      case 'SIGNER_UNCONFIRMED':
+        setResult(
+          'warning',
+          'Signature Valid, Signer Unconfirmed',
+          'UNCONFIRMED',
+          `The content matches this signature, but no expected signer was supplied. It only shows that the holder of ${report.signer} signed it. Supply an independently trusted expected signer to confirm who signed it.`
+        );
+        showToast('warning', 'Content signature verified; signer identity is unconfirmed.');
+        return;
+      case 'MISMATCH':
+        setResult(
+          'warning',
+          'Valid Signature, Context Mismatch',
+          'MISMATCH',
+          report.contextErrors?.[0] ||
+            report.inputErrors?.[0] ||
+            'The signature is cryptographically valid, but it is not valid for the selected input or expected signer.'
+        );
+        showToast('warning', 'Signature valid; selected verification context does not match.');
+        return;
+      default:
+        setResult('invalid', 'Signature Invalid', 'INVALID', report.signatureErrors?.[0] || report.errors[0] || 'Signature verification failed.');
+        showToast('error', 'Signature verification failed.');
     }
-
-    setResultCardMode('invalid');
-    resultTitle.textContent = 'Signature Invalid';
-    resultBadge.textContent = 'INVALID';
-    resultBadge.className = 'badge invalid';
-    resultBadge.setAttribute('aria-label', 'Verification result: invalid');
-    resultMessage.textContent = report.signatureErrors?.[0] || report.errors[0] || 'Signature verification failed.';
-    showToast('error', 'Signature verification failed.');
   }
 
   modeFileEl.addEventListener('change', async () => {
@@ -400,7 +381,6 @@ export function setupVerifyTab(state) {
   runBtn.addEventListener('click', async () => {
     const epoch = verificationEpoch;
     const controller = beginAbortableOperation();
-    let operationContext = null;
     contextBusy = true;
     runBtn.disabled = true;
     runBtn.textContent = 'Verifying...';
@@ -410,7 +390,7 @@ export function setupVerifyTab(state) {
       setProgress({ phase: 'start', message: 'Preparing verification...' });
       const signatureDoc = await readSignatureDoc();
       throwIfAborted(controller.signal);
-      operationContext = await refreshDigestContext({ strict: true, signal: controller.signal });
+      const operationContext = await refreshDigestContext({ strict: true, signal: controller.signal });
       if (!operationContext) throw makeAbortError();
       throwIfAborted(controller.signal);
 
@@ -451,21 +431,14 @@ export function setupVerifyTab(state) {
       }
       const message = friendlyError(err);
       resultCard.classList.remove('hidden');
-      setResultCardMode('invalid');
-      resultTitle.textContent = 'Verification Failed';
-      resultBadge.textContent = 'INVALID';
-      resultBadge.className = 'badge invalid';
-      resultBadge.setAttribute('aria-label', 'Verification result: invalid');
-      resultMessage.textContent = message;
+      setResult('invalid', 'Verification Failed', 'INVALID', message);
+      resultSignerLabel.textContent = 'Signer';
       resultSigner.value = '';
       resultChecked.value = '-';
       resultDetails.value = `Result: INVALID\n\nFAIL: ${message}`;
       appendLog(logEl, `Verification error: ${message}`);
       showToast('error', message);
     } finally {
-      if (operationContext && operationContext !== state.verify.inputContext) {
-        wipeInputBytes(operationContext);
-      }
       if (activeAbortController === controller) {
         contextBusy = false;
         finishAbortableOperation(controller);

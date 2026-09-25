@@ -1,16 +1,23 @@
 import { HASH_ALG } from './constants.js';
 
+function normalizeInputKind(kind) {
+  if (kind === 'file' || kind === 'text') return kind;
+  throw new Error('Input type must be file or text.');
+}
+
 export function buildHashEntriesFromDigests(digests) {
-  if (!digests?.sha256 || !digests?.sha3_512) throw new Error('Missing computed digests.');
+  if (!digests?.sha256?.hex || !digests?.sha3_512?.hex) {
+    throw new Error('Missing computed digests.');
+  }
   return [
     { alg: HASH_ALG.SHA256, hex: digests.sha256.hex },
     { alg: HASH_ALG.SHA3_512, hex: digests.sha3_512.hex },
   ];
 }
 
-function normalizeInputKind(kind) {
-  if (kind === 'file' || kind === 'text') return kind;
-  throw new Error('Input type must be file or text.');
+// Canonically equivalent names (e.g. NFD from HFS+ vs NFC elsewhere) must compare equal across platforms.
+export function normalizeFileName(name) {
+  return String(name || '').normalize('NFC');
 }
 
 export function buildInputDescriptor({ type, fileName, fileSize, mediaType = '' }) {
@@ -18,7 +25,7 @@ export function buildInputDescriptor({ type, fileName, fileSize, mediaType = '' 
   if (kind === 'file') {
     return {
       type: 'file',
-      name: String(fileName || ''),
+      name: normalizeFileName(fileName),
       namePolicy: 'exact-basename',
       size: Number(fileSize || 0),
       mediaType: String(mediaType || '').trim().toLowerCase() || 'application/octet-stream',

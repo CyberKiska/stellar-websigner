@@ -216,5 +216,5 @@ test('secret inputs clear and remask with or without a loaded signing session', 
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
   await expect(page.locator('#keys-seed-input')).toHaveValue('');
   await expect(page.locator('#keys-seed-input')).toHaveAttribute('type', 'password');
-  await expect(page.locator('#keys-generated-seed')).toHaveAttribute('type', 'password');
+  await expect(page.locator('#keys-generated-seed')).toHaveText('');
 });
