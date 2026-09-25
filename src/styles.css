@@ -373,7 +373,8 @@ h4 {
   margin-bottom: 0.75rem;
 }
 
-label {
+label,
+.field-label {
   display: block;
   font-size: 0.82rem;
   font-weight: 500;
@@ -421,9 +422,27 @@ textarea:focus {
 }
 
 .inline-input input,
-.inline-input textarea {
+.inline-input textarea,
+.inline-input .secret-display {
   min-width: 0;
   flex: 1;
+}
+
+.secret-display {
+  display: block;
+  min-height: 2.4rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.secret-display:empty::before {
+  content: attr(data-empty-text);
+  color: var(--text-muted);
 }
 
 .button-group {

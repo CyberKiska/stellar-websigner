@@ -31,6 +31,7 @@ async function main() {
 async function runScriptSelfTests() {
   const tests = [
     ['security headers and meta CSP', assertSecurityHeaders],
+    ['form controls opt out of browser form-state persistence', assertFormControlsNotPersisted],
     ['development server path containment', assertDevServerPathContainment],
     ['test build output variant containment', assertBuildVariantContainment],
     ['artifact manifest exact-set and digest verification', assertArtifactManifestVerification],
@@ -97,6 +98,19 @@ async function assertDevServerPathContainment() {
     if (resolveSafeFilePath(malicious, dist) !== null) {
       throw new Error(`Development server accepted traversal path: ${malicious}`);
     }
+  }
+}
+
+async function assertFormControlsNotPersisted() {
+  const html = await readFile(path.join(root, 'src', 'index.html'), 'utf8');
+  const controls = html.match(/<(?:input|textarea|select)\b[^>]*>/g) || [];
+  if (controls.length === 0) throw new Error('No form controls found.');
+  for (const control of controls) {
+    // Browsers save state of controls without autocomplete="off" for session restore and history.
+    if (!/\sautocomplete="off"/.test(control)) throw new Error(`Form control lacks autocomplete="off": ${control}`);
+  }
+  if (/<(?:input|textarea)\b[^>]*id="keys-generated-seed"/.test(html)) {
+    throw new Error('The generated secret seed must not be rendered into a form control.');
   }
 }
 

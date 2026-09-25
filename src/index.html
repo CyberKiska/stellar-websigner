@@ -88,17 +88,18 @@
               </p>
 
               <div class="form-group">
-                <label for="keys-generated-seed">Generated Secret Seed (S...)</label>
+                <span id="keys-generated-seed-label" class="field-label">Generated Secret Seed (S...)</span>
                 <div class="inline-input">
-                  <input id="keys-generated-seed" type="password" readonly />
-                  <button id="keys-copy-seed" class="secondary" type="button" disabled>Clipboard Disabled</button>
+                  <code id="keys-generated-seed" class="secret-display" aria-labelledby="keys-generated-seed-label" data-empty-text="No generated seed"></code>
+                  <button id="keys-generated-seed-toggle" class="secondary" type="button" disabled aria-controls="keys-generated-seed">Reveal</button>
                 </div>
+                <p class="muted-copy">Record the seed offline. Clipboard export is intentionally unsupported.</p>
               </div>
 
               <div class="form-group">
                 <label for="keys-generated-g">Generated Public Address (G...)</label>
                 <div class="inline-input">
-                  <input id="keys-generated-g" type="text" readonly />
+                  <input id="keys-generated-g" type="text" readonly autocomplete="off" />
                   <button id="keys-copy-g" class="secondary" type="button">Copy</button>
                 </div>
               </div>
@@ -117,8 +118,8 @@
               <div class="form-group">
                 <label for="keys-seed-input">Secret Seed (S...)</label>
                 <div class="inline-input">
-                  <input id="keys-seed-input" type="password" autocomplete="off" spellcheck="false" />
-                  <button id="keys-seed-toggle" class="secondary" type="button">Show</button>
+                  <input id="keys-seed-input" type="password" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other" />
+                  <button id="keys-seed-toggle" class="secondary" type="button" aria-controls="keys-seed-input">Show</button>
                 </div>
               </div>
 
@@ -131,7 +132,7 @@
 
               <div class="form-group">
                 <label for="keys-g-input">Public Address (G...) for verify-only mode</label>
-                <input id="keys-g-input" type="text" autocomplete="off" spellcheck="false" />
+                <input id="keys-g-input" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" />
               </div>
 
               <div class="button-group compact">
@@ -164,8 +165,8 @@
               <div class="form-group">
                 <label>Input Type</label>
                 <div class="radio-row">
-                  <label class="radio-inline"><input id="sign-mode-file" type="radio" name="sign-input-mode" value="file" checked /> File</label>
-                  <label class="radio-inline"><input id="sign-mode-text" type="radio" name="sign-input-mode" value="text" /> Plain Text</label>
+                  <label class="radio-inline"><input id="sign-mode-file" type="radio" name="sign-input-mode" value="file" checked autocomplete="off" /> File</label>
+                  <label class="radio-inline"><input id="sign-mode-text" type="radio" name="sign-input-mode" value="text" autocomplete="off" /> Plain Text</label>
                 </div>
                 <p class="muted-copy">
                   The app computes SHA-256 and SHA3-512, then signs a versioned protected manifest that binds the exact input metadata and both digests. External-wallet signing binds that manifest digest into XDR.
@@ -174,7 +175,7 @@
 
               <div id="sign-file-group" class="form-group">
                 <label for="sign-file-input">File to Sign</label>
-                <input id="sign-file-input" type="file" />
+                <input id="sign-file-input" type="file" autocomplete="off" />
               </div>
 
               <div id="sign-text-group" class="form-group hidden">
@@ -182,7 +183,7 @@
                   <label for="sign-text-input" class="no-bottom">Plain Text</label>
                   <button id="sign-text-paste" class="secondary small" type="button">Paste</button>
                 </div>
-                <textarea id="sign-text-input" rows="8" placeholder="Paste text to sign"></textarea>
+                <textarea id="sign-text-input" rows="8" placeholder="Paste text to sign" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
                 <p class="muted-copy">Maximum 1 MiB after UTF-8 encoding.</p>
               </div>
             </div>
@@ -195,7 +196,7 @@
                   <h4>SHA-256</h4>
                   <label for="sign-sha256-hex">HEX</label>
                   <div class="inline-input">
-                    <input id="sign-sha256-hex" type="text" readonly />
+                    <input id="sign-sha256-hex" type="text" readonly autocomplete="off" />
                     <button id="copy-sign-sha256-hex" class="secondary" type="button">Copy</button>
                   </div>
                 </div>
@@ -204,7 +205,7 @@
                   <h4>SHA3-512</h4>
                   <label for="sign-sha3-hex">HEX</label>
                   <div class="inline-input">
-                    <input id="sign-sha3-hex" type="text" readonly />
+                    <input id="sign-sha3-hex" type="text" readonly autocomplete="off" />
                     <button id="copy-sign-sha3-hex" class="secondary" type="button">Copy</button>
                   </div>
                 </div>
@@ -251,12 +252,12 @@
 
                 <div class="form-group">
                   <label for="sign-xdr-unsigned-xdr">Unsigned XDR</label>
-                  <textarea id="sign-xdr-unsigned-xdr" rows="4" readonly></textarea>
+                  <textarea id="sign-xdr-unsigned-xdr" rows="4" readonly autocomplete="off"></textarea>
                 </div>
 
                 <div class="form-group">
                   <label for="sign-xdr-signed-xdr">Paste Signed XDR</label>
-                  <textarea id="sign-xdr-signed-xdr" rows="4" placeholder="AAAA..."></textarea>
+                  <textarea id="sign-xdr-signed-xdr" rows="4" placeholder="AAAA..." autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
                 </div>
 
                 <div class="button-group compact">
@@ -277,37 +278,37 @@
 
               <div class="form-group">
                 <label for="sign-output-signer">Signer</label>
-                <input id="sign-output-signer" type="text" readonly />
+                <input id="sign-output-signer" type="text" readonly autocomplete="off" />
               </div>
 
               <div class="form-group">
                 <label for="sign-output-profile">Proof Profile</label>
-                <input id="sign-output-profile" type="text" readonly />
+                <input id="sign-output-profile" type="text" readonly autocomplete="off" />
               </div>
 
               <div class="form-group">
                 <label for="sign-output-input-info">Input</label>
-                <input id="sign-output-input-info" type="text" readonly />
+                <input id="sign-output-input-info" type="text" readonly autocomplete="off" />
               </div>
 
               <div class="form-group">
                 <label for="sign-output-hashes">Hashes</label>
-                <input id="sign-output-hashes" type="text" readonly />
+                <input id="sign-output-hashes" type="text" readonly autocomplete="off" />
               </div>
 
               <div class="form-group">
                 <label for="sign-output-size">Signature Size</label>
-                <input id="sign-output-size" type="text" readonly />
+                <input id="sign-output-size" type="text" readonly autocomplete="off" />
               </div>
 
               <div class="form-group">
                 <label for="sign-output-signature">Signature (Base64)</label>
-                <input id="sign-output-signature" type="text" readonly />
+                <input id="sign-output-signature" type="text" readonly autocomplete="off" />
               </div>
 
               <div class="form-group">
                 <label id="sign-output-json-label" for="sign-output-json">Signature JSON</label>
-                <textarea id="sign-output-json" rows="12" readonly></textarea>
+                <textarea id="sign-output-json" rows="12" readonly autocomplete="off"></textarea>
               </div>
 
               <div id="sign-status" class="status-box neutral">Waiting for input.</div>
@@ -315,7 +316,7 @@
               <details class="diagnostics-panel">
                 <summary class="diagnostics-summary">Diagnostics</summary>
                 <div class="form-group no-margin diagnostics-body">
-                  <textarea id="sign-log" class="mono-box log-box" rows="8" readonly></textarea>
+                  <textarea id="sign-log" class="mono-box log-box" rows="8" readonly autocomplete="off"></textarea>
                 </div>
               </details>
             </div>
@@ -333,14 +334,14 @@
               <div class="form-group">
                 <label>Input Type</label>
                 <div class="radio-row">
-                  <label class="radio-inline"><input id="verify-mode-file" type="radio" name="verify-input-mode" value="file" checked /> File</label>
-                  <label class="radio-inline"><input id="verify-mode-text" type="radio" name="verify-input-mode" value="text" /> Plain Text</label>
+                  <label class="radio-inline"><input id="verify-mode-file" type="radio" name="verify-input-mode" value="file" checked autocomplete="off" /> File</label>
+                  <label class="radio-inline"><input id="verify-mode-text" type="radio" name="verify-input-mode" value="text" autocomplete="off" /> Plain Text</label>
                 </div>
               </div>
 
               <div id="verify-file-group" class="form-group">
                 <label for="verify-file-input">Original File</label>
-                <input id="verify-file-input" type="file" />
+                <input id="verify-file-input" type="file" autocomplete="off" />
               </div>
 
               <div id="verify-text-group" class="form-group hidden">
@@ -348,18 +349,18 @@
                   <label for="verify-text-input" class="no-bottom">Original Plain Text</label>
                   <button id="verify-text-paste" class="secondary small" type="button">Paste</button>
                 </div>
-                <textarea id="verify-text-input" rows="8" placeholder="Paste original text"></textarea>
+                <textarea id="verify-text-input" rows="8" placeholder="Paste original text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
                 <p class="muted-copy">Maximum 1 MiB after UTF-8 encoding.</p>
               </div>
 
               <div class="form-group">
                 <label for="verify-sig-file">Signature File (.sig)</label>
-                <input id="verify-sig-file" type="file" accept=".sig,.json,application/json" />
+                <input id="verify-sig-file" type="file" accept=".sig,.json,application/json" autocomplete="off" />
               </div>
 
               <div class="form-group">
                 <label for="verify-expected-signer">Expected Signer (optional)</label>
-                <input id="verify-expected-signer" type="text" autocomplete="off" spellcheck="false" placeholder="G..." />
+                <input id="verify-expected-signer" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="G..." />
               </div>
 
               <div class="button-group compact">
@@ -384,20 +385,20 @@
               <div class="form-group">
                 <label for="verify-result-signer">Signer</label>
                 <div class="inline-input">
-                  <input id="verify-result-signer" type="text" readonly />
+                  <input id="verify-result-signer" type="text" readonly autocomplete="off" />
                   <button id="verify-copy-signer" class="secondary" type="button">Copy</button>
                 </div>
               </div>
 
               <div class="form-group">
                 <label for="verify-result-checked">Checked Data</label>
-                <input id="verify-result-checked" type="text" readonly />
+                <input id="verify-result-checked" type="text" readonly autocomplete="off" />
               </div>
 
               <details class="diagnostics-panel">
                 <summary class="diagnostics-summary">Technical Details</summary>
                 <div class="form-group no-margin diagnostics-body">
-                  <textarea id="verify-details" class="mono-box log-box" rows="12" readonly></textarea>
+                  <textarea id="verify-details" class="mono-box log-box" rows="12" readonly autocomplete="off"></textarea>
                 </div>
               </details>
             </div>
@@ -406,7 +407,7 @@
               <details class="diagnostics-panel">
                 <summary class="diagnostics-summary">Diagnostics</summary>
                 <div class="form-group no-margin diagnostics-body">
-                  <textarea id="verify-log" class="mono-box log-box" rows="8" readonly></textarea>
+                  <textarea id="verify-log" class="mono-box log-box" rows="8" readonly autocomplete="off"></textarea>
                 </div>
               </details>
             </div>

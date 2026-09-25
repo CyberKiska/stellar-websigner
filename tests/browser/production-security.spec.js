@@ -50,7 +50,7 @@ test('external-wallet build disables local-secret controls in the browser', asyn
   await expect(page.locator('#keys-generate')).toBeDisabled();
   await expect(page.locator('#keys-seed-input')).toBeDisabled();
   await expect(page.locator('#keys-load-seed')).toBeDisabled();
-  await expect(page.locator('#keys-copy-seed')).toBeDisabled();
+  await expect(page.locator('#keys-generated-seed-toggle')).toBeDisabled();
   await expect(page.locator('#keys-g-input')).toBeEnabled();
   await expect(page.locator('#keys-load-g')).toBeEnabled();
 });
@@ -109,20 +109,27 @@ test('local-secret flow, operation gate, hashing cancellation, signing, and life
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
   await page.waitForTimeout(500);
   await expect(page.locator('#keys-generated-g')).toHaveValue('');
-  await expect(page.locator('#keys-generated-seed')).toHaveValue('');
+  await expect(page.locator('#keys-generated-seed')).toHaveText('');
   await expect(page.locator('#keys-generate')).toBeEnabled();
 
   await page.locator('#keys-generate').click();
   await expect(page.locator('#keys-generated-g')).toHaveValue(/^G[A-Z2-7]{55}$/, { timeout: 15_000 });
-  await expect(page.locator('#keys-generated-seed')).toHaveValue(/^S[A-Z2-7]{55}$/);
+  await expect(page.locator('#keys-generated-seed')).toHaveText('');
+  await page.locator('#keys-generated-seed-toggle').click();
+  await expect(page.locator('#keys-generated-seed')).toHaveText(/^S[A-Z2-7]{55}$/);
   let signer = await page.locator('#keys-generated-g').inputValue();
   await expect(page.locator('#keys-load-g')).toBeEnabled();
 
+  await page.locator('#keys-seed-toggle').click();
+  await expect(page.locator('#keys-seed-input')).toHaveAttribute('type', 'text');
   await page.locator('#keys-seed-input').fill(SEP53_TEST_SEED);
   page.once('dialog', (dialog) => dialog.accept());
   await page.locator('#keys-load-seed').click();
   await expect(page.locator('#keys-generated-g')).toHaveValue(SEP53_TEST_SIGNER, { timeout: 15_000 });
-  await expect(page.locator('#keys-generated-seed')).toHaveValue('');
+  await expect(page.locator('#keys-generated-seed')).toHaveText('');
+  // Replacing the session re-masks the entry field and resets its visibility control.
+  await expect(page.locator('#keys-seed-input')).toHaveAttribute('type', 'password');
+  await expect(page.locator('#keys-seed-toggle')).toHaveText('Show');
   signer = SEP53_TEST_SIGNER;
 
   await page.locator('#nav-sign').click();
@@ -169,6 +176,6 @@ test('local-secret flow, operation gate, hashing cancellation, signing, and life
   await page.goBack();
   await expect(page.locator('#sys-status-text')).toHaveText('No key loaded');
   await expect(page.locator('#keys-generated-g')).toHaveValue('');
-  await expect(page.locator('#keys-generated-seed')).toHaveValue('');
+  await expect(page.locator('#keys-generated-seed')).toHaveText('');
   expect(pageErrors).toEqual([]);
 });

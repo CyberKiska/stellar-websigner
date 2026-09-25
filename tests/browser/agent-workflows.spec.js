@@ -52,7 +52,7 @@ async function verifyFile(page, doc, { name = 'report.txt', mimeType = 'text/pla
 test('text DOM bytes, independent SEP-53 verification, download, and key cleanup', async ({ page }) => {
   await loadKey(page, true);
   await expect(page.locator('#keys-seed-input')).toHaveValue('');
-  await expect(page.locator('#keys-generated-seed')).toHaveValue('');
+  await expect(page.locator('#keys-generated-seed')).toHaveText('');
   const actionRequests = [];
   page.on('request', (request) => actionRequests.push(request.url()));
   await page.locator('#nav-sign').click();
