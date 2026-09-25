@@ -51,6 +51,21 @@ export function setupVerifyTab(state) {
     if (mode) resultCard.classList.add(mode);
   }
 
+  function invalidateResult() {
+    resultCard.classList.add('hidden');
+    setResultCardMode(null);
+    resultMessage.textContent = '';
+    resultSigner.value = '';
+    resultChecked.value = '';
+    resultDetails.value = '';
+  }
+
+  // A verdict describes the inputs it was computed from; any edit retracts it.
+  function inputsChanged() {
+    verificationEpoch += 1;
+    invalidateResult();
+  }
+
   function getMode() {
     return modeTextEl.checked ? 'text' : 'file';
   }
@@ -288,7 +303,7 @@ export function setupVerifyTab(state) {
   }
 
   modeFileEl.addEventListener('change', async () => {
-    verificationEpoch += 1;
+    inputsChanged();
     cancelActiveOperation();
     applyModeUi();
     clearInputContext();
@@ -299,7 +314,7 @@ export function setupVerifyTab(state) {
   });
 
   modeTextEl.addEventListener('change', async () => {
-    verificationEpoch += 1;
+    inputsChanged();
     cancelActiveOperation();
     applyModeUi();
     clearInputContext();
@@ -310,7 +325,7 @@ export function setupVerifyTab(state) {
   });
 
   fileInput.addEventListener('change', async () => {
-    verificationEpoch += 1;
+    inputsChanged();
     cancelActiveOperation();
     clearInputContext();
     updateRunAvailability();
@@ -320,7 +335,7 @@ export function setupVerifyTab(state) {
   });
 
   textInput.addEventListener('input', async () => {
-    verificationEpoch += 1;
+    inputsChanged();
     cancelActiveOperation();
     clearInputContext();
     updateRunAvailability();
@@ -328,7 +343,7 @@ export function setupVerifyTab(state) {
   });
 
   sigFileInput.addEventListener('change', () => {
-    verificationEpoch += 1;
+    inputsChanged();
     updateRunAvailability();
   });
 
@@ -345,7 +360,7 @@ export function setupVerifyTab(state) {
       textInput.value = text;
       modeTextEl.checked = true;
       modeFileEl.checked = false;
-      verificationEpoch += 1;
+      inputsChanged();
       cancelActiveOperation();
       applyModeUi();
       clearInputContext();
@@ -358,7 +373,7 @@ export function setupVerifyTab(state) {
   });
 
   expectedSignerEl.addEventListener('input', () => {
-    verificationEpoch += 1;
+    inputsChanged();
     expectedSignerOverridden = expectedSignerEl.value.trim() !== autoExpectedSigner;
   });
 
@@ -450,12 +465,13 @@ export function setupVerifyTab(state) {
   });
 
   window.addEventListener('keys:updated', () => {
-    verificationEpoch += 1;
+    inputsChanged();
     syncExpectedSignerFromSession();
   });
   registerSessionWipeHandler(() => {
     cancelActiveOperation();
     clearInputContext();
+    invalidateResult();
   });
 
   applyModeUi();

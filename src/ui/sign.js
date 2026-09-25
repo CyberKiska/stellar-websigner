@@ -116,6 +116,7 @@ export function setupSignTab(state) {
     outputSignatureEl.value = '';
     outputJsonEl.value = '';
     downloadBtn.disabled = true;
+    setStatusBox(statusEl, 'neutral', 'Waiting for input.');
   }
 
   function resetXdrDraft() {
@@ -363,6 +364,7 @@ export function setupSignTab(state) {
       return;
     }
 
+    resetOutput();
     let context = null;
     try {
       context = await buildInputContext({ strict: true, requireBytes: false, signal });
@@ -393,6 +395,7 @@ export function setupSignTab(state) {
   }
 
   async function runXdrDraft() {
+    resetOutput();
     const epoch = operationEpoch;
     const signerAddress = state.keys.signerAddress || '';
     const context = await refreshDigestContext({ strict: true });
@@ -421,6 +424,7 @@ export function setupSignTab(state) {
   }
 
   async function runXdrProofCreate() {
+    resetOutput();
     const epoch = operationEpoch;
     const draft = state.sign.xdrDraft;
     const expectedSigner = state.keys.signerAddress;
@@ -622,6 +626,7 @@ export function setupSignTab(state) {
 
   xdrSignedXdrEl.addEventListener('input', () => {
     operationEpoch += 1;
+    resetOutput();
     updateActionAvailability();
   });
 

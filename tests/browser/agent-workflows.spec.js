@@ -104,8 +104,13 @@ test('file identity, advisory MIME warning, stale result, and tampered manifest'
     name: 'renamed.txt', mimeType: 'text/plain', buffer: Buffer.from('abc'),
   });
   await expect(page.locator('#verify-run')).toBeEnabled();
-  // Characterization: documentation must require a fresh run after any input edit.
-  await expect(page.locator('#verify-result-badge')).toHaveText('VALID');
+  // Any input edit retracts the previous verdict; only a fresh run produces a new one.
+  await expect(page.locator('#verify-result-card')).toBeHidden();
+  await page.locator('#verify-run').click();
+  await expect(page.locator('#verify-result-badge')).toHaveText('MISMATCH');
+  await page.locator('#verify-expected-signer').fill('GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ');
+  await expect(page.locator('#verify-result-card')).toBeHidden();
+  await page.locator('#verify-expected-signer').fill(SIGNER);
   await page.locator('#verify-run').click();
   await expect(page.locator('#verify-result-badge')).toHaveText('MISMATCH');
   await expect(page.locator('#verify-details')).toHaveValue(/Protected filename mismatch/);
@@ -167,9 +172,9 @@ test('external XDR handoff with independent signing, wrong network, and stale ou
   await page.locator('#sign-xdr-signed-xdr').fill(signedXdr(PUBLIC_NETWORK, changedTx));
   await page.locator('#sign-xdr-create').click();
   await expect(page.locator('#sign-status')).toContainText('differs from the exact unsigned draft');
-  // Characterization: a failed repeat does not invalidate the earlier downloadable .sig.
-  await expect(page.locator('#sign-download')).toBeEnabled();
-  expect(JSON.parse(await page.locator('#sign-output-json').inputValue())).toEqual(doc);
+  // A failed repeat retracts the earlier output rather than leaving it presented as current.
+  await expect(page.locator('#sign-download')).toBeDisabled();
+  await expect(page.locator('#sign-output-json')).toHaveValue('');
   await page.locator('#nav-verify').click();
   await page.locator('#verify-mode-text').check();
   await page.locator('#verify-text-input').fill('abc');
