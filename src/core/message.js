@@ -15,12 +15,17 @@ export function buildHashEntriesFromDigests(digests) {
   ];
 }
 
+// Canonically equivalent names (e.g. NFD from HFS+ vs NFC elsewhere) must compare equal across platforms.
+export function normalizeFileName(name) {
+  return String(name || '').normalize('NFC');
+}
+
 export function buildInputDescriptor({ type, fileName, fileSize, mediaType = '' }) {
   const kind = normalizeInputKind(type);
   if (kind === 'file') {
     return {
       type: 'file',
-      name: String(fileName || ''),
+      name: normalizeFileName(fileName),
       namePolicy: 'exact-basename',
       size: Number(fileSize || 0),
       mediaType: String(mediaType || '').trim().toLowerCase() || 'application/octet-stream',

@@ -803,6 +803,29 @@ export async function runSelfTest() {
       if (!anchored.valid || anchored.summary !== 'VALID') throw new Error(`Expected VALID, got ${anchored.summary}.`);
     }),
 
+    createResult('v3 file names match under Unicode NFC normalization only', async () => {
+      const seed = hexToBytes('2424242424242424242424242424242424242424242424242424242424242424');
+      const bytes = utf8ToBytes('normalization');
+      const signResult = await createLocalSep53MessageSignature({
+        inputContext: await makeFileContext('cafe\u0301.txt', bytes),
+        seedBytes: seed,
+        signerAddress: '',
+      });
+      if (signResult.doc.protected.input.name !== 'caf\u00e9.txt') throw new Error('Signed file name is not NFC.');
+      const nfc = await verifyDetachedSignature({
+        signatureDoc: signResult.doc,
+        inputContext: await makeFileContext('caf\u00e9.txt', bytes),
+        expectedSigner: signResult.signer,
+      });
+      if (!nfc.valid) throw new Error(`Expected canonically equivalent name to match, got ${nfc.summary}.`);
+      const other = await verifyDetachedSignature({
+        signatureDoc: signResult.doc,
+        inputContext: await makeFileContext('cafe.txt', bytes),
+        expectedSigner: signResult.signer,
+      });
+      if (other.summary !== 'MISMATCH') throw new Error(`Expected a different name to mismatch, got ${other.summary}.`);
+    }),
+
     createResult('v3 treats browser file media type as signed advisory metadata', async () => {
       const seed = hexToBytes('2323232323232323232323232323232323232323232323232323232323232323');
       const bytes = utf8ToBytes('{"portable":true}');
