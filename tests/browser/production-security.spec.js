@@ -16,6 +16,9 @@ test('deployment sends required headers and refuses framing', async ({ page, req
   expect(headers['cross-origin-opener-policy']).toBe('same-origin');
   expect(headers['cross-origin-resource-policy']).toBe('same-origin');
   expect(headers['referrer-policy']).toBe('no-referrer');
+  expect(headers['strict-transport-security']).toContain('max-age=63072000');
+  expect(headers['x-content-type-options']).toBe('nosniff');
+  expect(headers['cross-origin-embedder-policy']).toBe('require-corp');
 
   await page.goto('/');
   await page.evaluate((src) => {

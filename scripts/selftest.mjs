@@ -134,6 +134,13 @@ async function assertSecurityHeaders() {
   if (!HTTP_CSP.includes("frame-ancestors 'none'")) {
     throw new Error('HTTP CSP missing frame-ancestors.');
   }
+  const headers = Object.fromEntries(SECURITY_HEADERS);
+  const hsts = headers['Strict-Transport-Security'] || '';
+  const maxAge = Number(hsts.match(/max-age=(\d+)/)?.[1] || 0);
+  if (maxAge < 31536000 || !hsts.includes('includeSubDomains')) {
+    throw new Error('Strict-Transport-Security must be at least one year and include subdomains.');
+  }
+  if (headers['X-Content-Type-Options'] !== 'nosniff') throw new Error('X-Content-Type-Options: nosniff is required.');
   const headerText = securityHeadersText();
   for (const [name, value] of SECURITY_HEADERS) {
     if (!headerText.includes(`  ${name}: ${value}`)) {
