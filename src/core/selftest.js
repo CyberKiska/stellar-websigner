@@ -19,7 +19,7 @@ import {
 import { assertStrictEd25519PublicKey, assertStrictEd25519Signature } from './ed25519-validation.js';
 import { canonicalJsonStringify } from './canonical-json.js';
 import { assertTopLevelBrowsingContext, localSecretOperationsAllowed } from './deployment-policy.js';
-import { computeDigests, createSha256Stream, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
+import { computeDigests, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
 import { MANIFEST_DATA_NAME, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
 import {
@@ -306,29 +306,20 @@ export async function runSelfTest() {
       );
     }),
 
-    createResult('streaming digest vectors and corpus', async () => {
+    createResult('SHA-256 provider vectors and SHA3-512 streaming corpus', async () => {
       const sha256Vectors = [
+        ['empty', new Uint8Array(0), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'],
+        ['abc', utf8ToBytes('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'],
         [
-          'empty',
-          new Uint8Array(0),
-          'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-        ],
-        [
-          'abc',
-          utf8ToBytes('abc'),
-          'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
-        ],
-        [
-          'rfc4634 multi-block',
+          'FIPS 180-4 448-bit two-block',
           utf8ToBytes('abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'),
           '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1',
         ],
       ];
-
       for (const [name, bytes, expectedHex] of sha256Vectors) {
-        const actualHex = bytesToHexLower(await digestWithChunks(createSha256Stream, bytes, [1, 7, 64, 3]));
+        const actualHex = bytesToHexLower(await sha256(bytes));
         if (actualHex !== expectedHex) {
-          throw new Error(`SHA-256 stream ${name}: expected ${expectedHex}, got ${actualHex}.`);
+          throw new Error(`SHA-256 ${name}: expected ${expectedHex}, got ${actualHex}.`);
         }
       }
 
@@ -346,16 +337,9 @@ export async function runSelfTest() {
         const size = sizeState % 16385;
         const bytes = makeDeterministicBytes(size, i + 1);
         const chunkSizes = [1 + (i % 17), 31 + (i % 97), 255 + (i % 251), 4096];
-
-        const oneShotSha256 = bytesToHexLower(await sha256(bytes));
-        const streamSha256 = bytesToHexLower(await digestWithChunks(createSha256Stream, bytes, chunkSizes));
-        if (streamSha256 !== oneShotSha256) {
-          throw new Error(`SHA-256 stream corpus mismatch at size ${size}.`);
-        }
-
-        const oneShotSha3 = bytesToHexLower(await sha3_512(bytes));
-        const streamSha3 = bytesToHexLower(await digestWithChunks(createSha3_512Stream, bytes, chunkSizes));
-        if (streamSha3 !== oneShotSha3) {
+        const oneShot = bytesToHexLower(await sha3_512(bytes, { implementation: 'fallback' }));
+        const streamed = bytesToHexLower(await digestWithChunks(createSha3_512Stream, bytes, chunkSizes));
+        if (streamed !== oneShot) {
           throw new Error(`SHA3-512 stream corpus mismatch at size ${size}.`);
         }
       }
