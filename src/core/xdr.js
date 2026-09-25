@@ -1,5 +1,6 @@
 import { canonicalBase64ToBytes, bytesEqual, bytesToBase64, concatBytes, utf8ToBytes } from './bytes.js';
 import { signatureHint, verifyBytesWithPublic } from './ed25519.js';
+import { assertStrictEd25519Signature } from './ed25519-validation.js';
 import { sha256 } from './hash.js';
 import { MANIFEST_DATA_NAME } from './constants.js';
 
@@ -168,6 +169,7 @@ export async function findValidDecoratedSignature(signatures, signerPublicBytes,
   if (!(item.hint instanceof Uint8Array) || item.hint.length !== 4 || !bytesEqual(item.hint, signerHint)) {
     throw new Error('Decorated signature hint does not match the declared signer.');
   }
+  assertStrictEd25519Signature(item.signature);
   return (await verifyBytesWithPublic(signerPublicBytes, txHash, item.signature)) ? item : null;
 }
 

@@ -664,6 +664,25 @@ export async function runSelfTest() {
       );
     }),
 
+    createResult('strict signature policy rejections are reported with their reason', async () => {
+      const { doc, inputContext } = await makeSignedTextFixture('explicit strict-policy diagnostics');
+      const signature = base64ToBytes(doc.signatureB64);
+      const mixedOrderR = signature.slice();
+      mixedOrderR.set(hexToBytes('9599999999999999999999999999999999999999999999999999999999999999'), 0);
+      const nonCanonicalS = signature.slice();
+      nonCanonicalS.set(hexToBytes('edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010'), 32);
+      for (const [bytes, reason] of [[mixedOrderR, 'rejects signature R'], [nonCanonicalS, 'scalar S is not canonical']]) {
+        const verify = await verifyDetachedSignature({
+          signatureDoc: { ...doc, signatureB64: bytesToBase64(bytes) },
+          inputContext,
+          expectedSigner: doc.signer,
+        });
+        if (verify.signatureValid || !verify.errors.some((line) => line.includes(reason))) {
+          throw new Error(`Expected explicit "${reason}" diagnostic, got: ${verify.errors.join(' | ')}`);
+        }
+      }
+    }),
+
     createResult('canonical JSON rejects non-I-JSON values', async () => {
       assertThrows(() => canonicalJsonStringify({ value: Number.NaN }), 'non-finite');
       assertThrows(() => canonicalJsonStringify({ value: '\ud800' }), 'unpaired UTF-16 surrogate');

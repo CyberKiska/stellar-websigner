@@ -1,5 +1,6 @@
 import { canonicalBase64ToBytes, bytesToBase64, concatBytes, utf8ToBytes, wipeBytes } from './bytes.js';
 import { signBytesWithSeed, verifyBytesWithPublic } from './ed25519.js';
+import { assertStrictEd25519Signature } from './ed25519-validation.js';
 import { sha256 } from './hash.js';
 import { SEP53_PREFIX } from './constants.js';
 
@@ -46,5 +47,7 @@ export function parseSep53Signature(signatureB64) {
   if (signatureBytes.length !== 64) {
     throw new Error(`Expected 64-byte signature, got ${signatureBytes.length}.`);
   }
+  // Surface strict-policy rejections (R point, canonical S) with their specific reason.
+  assertStrictEd25519Signature(signatureBytes);
   return signatureBytes;
 }
