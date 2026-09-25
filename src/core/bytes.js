@@ -1,4 +1,4 @@
-import { assertWellFormedUnicode } from './canonical-json.js';
+import { assertIJsonUnicode, assertWellFormedUnicode } from './canonical-json.js';
 
 const textEncoder = new TextEncoder();
 const strictUtf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -116,7 +116,8 @@ export function base64ToBytes(base64Value) {
 }
 
 export function canonicalBase64ToBytes(base64Value, { maxBytes = Number.POSITIVE_INFINITY } = {}) {
-  const value = String(base64Value || '');
+  if (typeof base64Value !== 'string') throw new Error('Base64 value must be a string.');
+  const value = base64Value;
   if (!value) throw new Error('Base64 value is empty.');
   if (value.length % 4 !== 0) throw new Error('Base64 value must use canonical padding.');
   if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
@@ -167,7 +168,8 @@ export function wipeBytes(value) {
 }
 
 export function safeJsonParse(text, { maxLength = 256 * 1024, maxDepth = 16 } = {}) {
-  const source = String(text);
+  if (typeof text !== 'string') throw new Error('JSON document must be a string.');
+  const source = text;
   if (source.length > maxLength) {
     throw new Error(`JSON document exceeds ${maxLength} characters.`);
   }
@@ -285,7 +287,7 @@ function scanJson(source, maxDepth) {
       if (code === 0x22) {
         offset += 1;
         const value = JSON.parse(source.slice(start, offset));
-        assertWellFormedUnicode(value);
+        assertIJsonUnicode(value);
         return value;
       }
       if (code < 0x20) throw new Error('Malformed JSON string.');

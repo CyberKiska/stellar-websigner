@@ -38,7 +38,7 @@ Use the visible labels or the IDs below. With browser automation, use normal fil
 
 1. Open **Verify** (`#nav-verify`). Select File (`#verify-mode-file`, `#verify-file-input`) or Plain Text (`#verify-mode-text`, `#verify-text-input`), matching the signed role. Supply the original input.
 2. Upload the signature document to `#verify-sig-file`.
-3. Set `#verify-expected-signer` to the trusted full G address. The field auto-fills from the Keys session; check it is the intended signer, not merely the loaded key. Leaving it blank yields `UNVERIFIED SIGNER` at best, never `VALID`.
+3. Set `#verify-expected-signer` to the trusted full G address. The field auto-fills from the Keys session; check it is the intended signer, not merely the loaded key. Leaving it blank yields `UNCONFIRMED` at best, never `VALID`.
 4. Wait for **Verify Signature** (`#verify-run`) to enable; click it. Wait for completion and read `#verify-result-badge`, `#verify-result-message`, `#verify-result-signer`, and `#verify-details` (expand diagnostics if collapsed).
 5. Interpret the result:
 
@@ -46,7 +46,7 @@ Use the visible labels or the IDs below. With browser automation, use normal fil
    |---|---|
    | `VALID` (`VALID`) | Proof, selected input, and the supplied expected signer all match. |
    | `WARNING` (`VALID_WITH_WARNINGS`) | All three checks pass; read the warning. A MIME-only difference is advisory. |
-   | `UNVERIFIED SIGNER` (`SIGNER_UNVERIFIED`) | Proof and input match, but no expected signer was supplied (`Expected Signer Matches: NOT CHECKED`). This only shows that the holder of the displayed key signed; anyone can re-sign substituted content with their own key. Not acceptable as authenticity. Obtain the trusted G and verify again. |
+   | `UNCONFIRMED` (`SIGNER_UNCONFIRMED`) | Proof and input match, but no expected signer was supplied (`Expected Signer Matches: NOT SUPPLIED`). This only shows that the holder of the displayed key signed; anyone can re-sign substituted content with their own key. Not acceptable as authenticity. Obtain the trusted G and verify again. |
    | `MISMATCH` (`MISMATCH`) | Cryptographic proof passed, but content/role/name/size or expected signer differs. Do not accept for the requested context. |
    | `INVALID` (`INVALID`) | Invalid/malformed proof or input/preflight failure. Comparisons are `NOT CHECKED`, and the signer is labeled **Claimed Signer (not authenticated)**. Do not trust any displayed document metadata. |
 
@@ -86,7 +86,7 @@ Output and **Download .sig** are reset whenever a new local signing, draft gener
 | Local-secret controls disabled | Use external signing; verify deployment policy/security prerequisites for any later local-secret use. |
 | StrKey length/prefix/charset/checksum or strict point rejection | Re-obtain the full correct G/S. Do not “repair” checksums, accept muxed keys, or relax the point policy. |
 | `Provided Ed25519 public key does not match the private seed.` | The G in `#keys-g-input` is not this seed's address. Reconcile intended identity with the user; clear or correct G and retry. |
-| `UNVERIFIED SIGNER` | Obtain the signer's G from a trusted source, enter it in `#verify-expected-signer`, verify again. |
+| `UNCONFIRMED` | Obtain the signer's G from a trusted source, enter it in `#verify-expected-signer`, verify again. |
 | Sign/Verify stays disabled | Ensure nonempty UI text or selected file, size limits, required key/draft/`.sig`, and completed hashing. Silent text/verify preparation failures may appear only as disabled controls. Correct the input and trigger a new input/change event. |
 | Clipboard unavailable/denied or copy appears successful | Use normal manual/select-copy or paste; verify destination text. Legacy `execCommand('copy')` fallback does not check success. No secret-copy workaround. |
 | `byte-order mark` / `not valid UTF-8` / size/JSON/Base64/schema error | Use an intact supported document within limits, saved as UTF-8 without BOM. Preserve signed fields; do not delete unknown fields or weaken validation to make an untrusted proof pass. v2 documents are unsupported; request a v3 signature. |
@@ -100,7 +100,7 @@ Correct a known cause before retrying; stop and report unresolved provider, wall
 
 ## Representative examples
 
-- **Local smoke test, public test key only:** use S `SAKICEVQLYWGSOJS4WW7HZJWAHZVEEBS527LHK5V4MLJALYKICQCJXMW`; expected G `GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L` (enter G first, then S). Sign Plain Text `abc` (no newline). Size is 3, SHA-256 is `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`. Download `plain-text.sig`; verify `abc` + that G → `VALID`; blank expected signer → `UNVERIFIED SIGNER`; `abd` → `MISMATCH`. This is a manifest signature, not the standard's raw `abc` signature.
+- **Local smoke test, public test key only:** use S `SAKICEVQLYWGSOJS4WW7HZJWAHZVEEBS527LHK5V4MLJALYKICQCJXMW`; expected G `GBXFXNDLV4LSWA4VB7YIL5GBD7BVNR22SGBTDKMO2SBZZHDXSKZYCP7L` (enter G first, then S). Sign Plain Text `abc` (no newline). Size is 3, SHA-256 is `ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad`. Download `plain-text.sig`; verify `abc` + that G → `VALID`; blank expected signer → `UNCONFIRMED`; `abd` → `MISMATCH`. This is a manifest signature, not the standard's raw `abc` signature.
 - **Filename identity:** sign file `report.txt` containing bytes `61 62 63`. Verify a renamed copy `renamed.txt` with identical bytes → `MISMATCH`; original name/bytes but browser MIME `application/octet-stream` instead of `text/plain` → `WARNING` / `VALID_WITH_WARNINGS`. Changing `protected.input.name` inside `.sig` → `INVALID`. `café.txt` in NFC and NFD forms is the same name.
 - **External handoff:** load the wallet G, use text `abc`, generate XDR, confirm the wallet's ManageData value equals `#sign-xdr-manifest-digest`, sign on Public Network without submitting, paste, create `.sig`, download, verify with the expected signer. Signing on Testnet fails; changing fee from 8000 to 8001 fails exact-draft finalization even with a valid Ed25519 signature, and leaves no downloadable output.
 

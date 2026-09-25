@@ -28,23 +28,24 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Install browser engines
+        run: npx --no-install playwright install --with-deps chromium firefox webkit
+
       - name: Full security and build gate
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+          BUILD_TARGET: pages
           LOCAL_SECRET_POLICY: disabled
-        run: npm run check
+        run: npm run check:release
 
-      - name: Remove unsupported response-header marker
-        # GitHub Pages cannot serve _headers. Drop it from the manifest as well so the uploaded
-        # artifact still passes exact-set verification.
-        run: |
-          rm -f dist/_headers
-          grep -v '  _headers$' dist/artifact-manifest.sha256 > dist/artifact-manifest.tmp
-          mv dist/artifact-manifest.tmp dist/artifact-manifest.sha256
-          npm run verify:artifact
+      - name: Verify vector drift
+        run: git diff --exit-code test-vectors.json
 
       - name: Setup Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Verify final upload artifact
+        run: npm run verify:artifact
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

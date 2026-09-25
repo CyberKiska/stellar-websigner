@@ -28,7 +28,7 @@ This checklist prepares a production release candidate. Maintainer tag and artif
 
 ## Protocol acceptance
 
-- Verify a v3 SEP-53 proof and a v3 XDR proof against known-good fixtures with the expected signer supplied (`VALID`), and without it (`SIGNER_UNVERIFIED`, never `VALID`).
+- Verify a v3 SEP-53 proof and a v3 XDR proof against known-good fixtures with the expected signer supplied (`VALID`), and without it (`SIGNER_UNCONFIRMED`, never `VALID`).
 - Verify tampered signature bytes produce `INVALID` without evaluating selected input metadata.
 - Verify a valid signature with different bytes, basename, or expected signer produces `MISMATCH`.
 - Verify identical file bytes/name/size with a different browser-reported media type remains `VALID` with an advisory warning.

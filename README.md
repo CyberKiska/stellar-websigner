@@ -14,7 +14,7 @@ For AI-assisted operation, use the repository-local [Stellar WebSigner skill](do
 1. Key management: generate/import Ed25519 (Stellar) keys and export public information only.
 2. Sign locally: select file/text, sign a protected manifest through SEP-53, download `.sig`.
 3. Sign with external wallet: generate unsigned XDR proof, sign externally, paste signed XDR, download `.sig`.
-4. Verify: select original input + `.sig` + the expected signer, get `VALID`, `SIGNER_UNVERIFIED`, `MISMATCH`, or `INVALID` with separated cryptographic, input, and signer-context diagnostics.
+4. Verify: select original input + `.sig` + the expected signer, get `VALID`, `UNCONFIRMED`, `MISMATCH`, or `INVALID` with separated cryptographic, input, and signer-context diagnostics.
 
 ------------
 
@@ -70,19 +70,19 @@ Key generation uses `subtle.generateKey('Ed25519')` and therefore relies on the 
 
 ### Signature format choice
 
-Signatures use JSON schema `stellar-signature/v3`; no other schema is accepted.
+Version 3.0.0 accepts only JSON schema `stellar-signature/v3`. Earlier containers are rejected; unsigned-metadata legacy verification has been removed.
 
 - `protected` binds application, format version, purpose, signer, proof profile, exact input role/name (Unicode NFC)/size, advisory browser media metadata, and exactly SHA-256 plus SHA3-512;
 - protected bytes use RFC 8785 canonical JSON and reject non-I-JSON strings/numbers;
-- signature files must be UTF-8 without a byte-order mark; JSON parsing rejects duplicate members, excessive size/depth, unknown fields, and missing fields;
-- binary fields require canonical padded RFC 4648 Base64.
+- JSON files require valid UTF-8 without a BOM; parsing rejects duplicate members, noncharacters, excessive size/depth, unknown fields, missing fields, and incorrect field types;
+- binary fields require strings containing canonical padded RFC 4648 Base64; arrays and other coercible values are rejected.
 
 Text mode signs UTF-8 of the textarea DOM value, with no Unicode normalization and with the browser's textarea newline behavior; unpaired UTF-16 surrogates are rejected. Verifiers must supply the same DOM text value. Text is limited to 1 MiB after UTF-8 encoding and is hashed in cooperative, cancellable chunks.
 
 Verification authenticates the canonical protected manifest before using its metadata to compare the selected input or the expected signer. `signatureValid`, `inputMatches`, and `contextMatches` are reported independently:
 
 - `VALID`: the proof, the selected input, and the expected signer all match;
-- `SIGNER_UNVERIFIED`: the proof and input match, but no expected signer was supplied. The signer named in a `.sig` is self-asserted; anyone can re-sign substituted content with their own key. This state only shows that the holder of that key signed, and is never presented as `VALID`. Obtain the expected `G...` address through a trusted channel;
+- `SIGNER_UNCONFIRMED`: the proof and input match, but no expected signer was supplied. The signer named in a `.sig` is self-asserted; anyone can re-sign substituted content with their own key. This state only shows that the holder of that key signed, and is never presented as `VALID`. Obtain the expected `G...` address through a trusted channel;
 - `MISMATCH`: a valid signature for different content, basename, size, or signer;
 - `INVALID`: a failed proof. Input/context results are then reported as not checked, and the document's signer is labeled as claimed, not authenticated.
 
@@ -131,6 +131,8 @@ npm run dev
 
 Open: `http://localhost:5173`
 
+Use `npm run preview` to build, verify, and serve the minified production artifact on loopback without file watching. The browser security gate uses this mode for both local-secret policies.
+
 ### Build
 
 ```bash
@@ -153,7 +155,7 @@ GitHub Pages is not an acceptable production secret-key origin: it cannot supply
 3. Keep workflow file `.github/workflows/pages.yml` in `main`.
 4. Run the workflow manually from the `Actions` tab.
 
-The workflow builds `dist/` and deploys it as the Pages artifact.
+The workflow runs the complete release gate and builds `dist/` with `BUILD_TARGET=pages` and `LOCAL_SECRET_POLICY=disabled`. The Pages target omits unsupported header markers before generating the manifest; the exact final upload directory is verified again before upload. A Pages build refuses an enabled local-secret policy.
 
 For production, use a dedicated HTTPS origin containing no unrelated applications and a host or edge proxy that sets the headers below. Submit the origin to the HSTS preload list: the in-app secure-context check cannot resist TLS stripping, because an active attacker serves their own page. Do not accept a production seed until deployed headers and iframe denial have been tested. A meta CSP cannot enforce `frame-ancestors`. The application also refuses to initialize when framed, including on header-limited preview hosts; this is defense in depth and not a substitute for response headers.
 
@@ -164,6 +166,7 @@ Content-Security-Policy: default-src 'self'; connect-src 'none'; script-src 'sel
 Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 X-Frame-Options: DENY
 X-Content-Type-Options: nosniff
+Cache-Control: no-cache
 Referrer-Policy: no-referrer
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
@@ -181,7 +184,7 @@ curl -I https://example.invalid/
 
 Confirm the response includes the headers above, that the page cannot be embedded in an iframe, and that `self.crossOriginIsolated` is `true` in the loaded page.
 
-Builds display the package version and commit identifier, use content-addressed JavaScript filenames, and emit `artifact-manifest.sha256`. `npm run verify:artifact` rejects missing, extra, non-regular, path-unsafe, or digest-mismatched build files. The manifest detects artifact drift but is not an authenticity proof when served from the same origin. Production releases should additionally use signed tags and an out-of-band signed attestation/checksum.
+Builds display the package version and commit identifier, use content-addressed JavaScript filenames, and emit `artifact-manifest.sha256`. The commit comes from CI or the local Git checkout; source archives should set `BUILD_COMMIT` to the full commit ID. `npm run verify:artifact` rejects missing, extra, non-regular, path-unsafe, or digest-mismatched build files. The manifest detects artifact drift but is not an authenticity proof when served from the same origin. Production releases should additionally use signed tags and an out-of-band signed attestation/checksum. Configure HTTPS redirection at the host; HSTS takes effect only after a secure response.
 
 ### Self-test
 
@@ -202,6 +205,8 @@ Covers:
 - seed import with a supplied `G...` never exporting the private key;
 - every form control opting out of browser form-state persistence.
 
+`npm run test:core` additionally compares both bundled hashes with independent Node/OpenSSL implementations across 266 input sizes (including empty input, padding boundaries, and the 4 MiB SHA-256 transition). It checks the published SEP-53/XDR vectors using independent signing and transaction encoding, adversarial Ed25519 points/scalars, strict container parsing, byte ownership, and complete build packaging. The build tools are pinned in both `package.json` and the lockfile; use `npm ci` for reproducible installation.
+
 ### Production browser security gate
 
 Install the pinned browser engines once, then run the complete release gate:
@@ -215,7 +220,7 @@ The Playwright suite runs the deployed bundle in Chromium, Firefox, and WebKit. 
 
 Local-secret support is capability-gated rather than inferred from the browser name. A provider must pass the RFC 8032 startup signing and verification KATs, including the provider-negative cases. A provider that fails is not permitted to continue in a reduced cryptographic mode: all application controls are disabled and a visible fatal error is displayed. The browser gate permits this explicit fail-closed outcome for an engine whose provider is non-conformant; Chromium and Firefox are required to complete the full local-secret flow.
 
-For a release candidate, run `npm run check:release`, then follow [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md) and [SECURITY.md](SECURITY.md). Maintainer tag and artifact signatures are intentionally handled as a separate provenance step.
+For a release candidate, run `npm run check:release`, verify that regenerated vectors have no unexplained changes, and verify the exact final package after any transfer. Follow the deployment requirements above and [SECURITY.md](SECURITY.md). Maintainer tag and artifact signatures are handled as a separate provenance step.
 
 ------------
 

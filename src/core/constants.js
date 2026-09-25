@@ -31,5 +31,6 @@ export const SIGNATURE_SCHEME = Object.freeze({
   TX_ENVELOPE_ED25519: 'tx-envelope-ed25519',
 });
 
-// ManageData name carrying SHA-256 of the canonical protected manifest in the XDR proof profile.
-export const MANIFEST_DATA_NAME = 'org.stellar-websigner.manifest.sha256';
+export const MANAGE_DATA_NAME = Object.freeze({
+  MANIFEST_SHA256: 'org.stellar-websigner.manifest.sha256',
+});

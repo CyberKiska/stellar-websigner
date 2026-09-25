@@ -134,11 +134,11 @@ test('file identity, advisory MIME warning, stale result, and tampered manifest'
   await page.locator('#verify-expected-signer').fill('');
   await page.locator('#verify-run').click();
   // A self-asserted signer is never presented as VALID.
-  await expect(page.locator('#verify-result-badge')).toHaveText('UNVERIFIED SIGNER');
-  await expect(page.locator('#verify-result-title')).toHaveText('Valid Signature, Signer Not Verified');
-  await expect(page.locator('#verify-details')).toHaveValue(/Result: SIGNER_UNVERIFIED/);
-  await expect(page.locator('#verify-details')).toHaveValue(/No expected signer was supplied/);
-  await expect(page.locator('#verify-details')).toHaveValue(/Expected Signer Matches: NOT CHECKED/);
+  await expect(page.locator('#verify-result-badge')).toHaveText('UNCONFIRMED');
+  await expect(page.locator('#verify-result-title')).toHaveText('Signature Valid, Signer Unconfirmed');
+  await expect(page.locator('#verify-details')).toHaveValue(/Result: SIGNER_UNCONFIRMED/);
+  await expect(page.locator('#verify-details')).toHaveValue(/No trusted expected signer was supplied/);
+  await expect(page.locator('#verify-details')).toHaveValue(/Expected Signer Matches: NOT SUPPLIED/);
   const tampered = structuredClone(doc);
   tampered.protected.input.name = 'renamed.txt';
   await verifyFile(page, tampered, { name: 'renamed.txt' });

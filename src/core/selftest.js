@@ -21,7 +21,7 @@ import { assertStrictEd25519PublicKey, assertStrictEd25519Signature } from './ed
 import { canonicalJsonStringify } from './canonical-json.js';
 import { assertTopLevelBrowsingContext, localSecretOperationsAllowed } from './deployment-policy.js';
 import { computeDigests, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
-import { MANIFEST_DATA_NAME, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
+import { HASH_ALG, MANAGE_DATA_NAME, PROOF_TYPE, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
 import {
   createFileInputContext,
@@ -154,8 +154,8 @@ async function assertFileSignVerifyForSize(size) {
   });
   const verify = await verifyDetachedSignature({
     signatureDoc: signResult.doc,
-    inputContext: fileContext,
     expectedSigner: signResult.signer,
+    inputContext: fileContext,
   });
 
   if (!verify.valid) {
@@ -754,8 +754,8 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
-        inputContext: textContext,
         expectedSigner: signResult.signer,
+        inputContext: textContext,
       });
 
       if (!verify.valid) {
@@ -776,8 +776,8 @@ export async function runSelfTest() {
       const verifyContext = await makeFileContext('renamed-proof.bin', utf8ToBytes('Strict SEP-53 raw file bytes'));
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
-        inputContext: verifyContext,
         expectedSigner: signResult.signer,
+        inputContext: verifyContext,
       });
 
       if (verify.valid || !verify.errors.some((line) => line.includes('filename mismatch'))) {
@@ -792,8 +792,8 @@ export async function runSelfTest() {
       const { doc, inputContext } = await makeSignedTextFixture('self-asserted signer regression');
       for (const expectedSigner of ['', '   ']) {
         const verify = await verifyDetachedSignature({ signatureDoc: doc, inputContext, expectedSigner });
-        if (verify.valid || verify.summary !== 'SIGNER_UNVERIFIED' || !verify.signatureValid) {
-          throw new Error(`Expected SIGNER_UNVERIFIED without an expected signer, got ${verify.summary}.`);
+        if (verify.valid || verify.summary !== 'SIGNER_UNCONFIRMED' || !verify.signatureValid) {
+          throw new Error(`Expected SIGNER_UNCONFIRMED without an expected signer, got ${verify.summary}.`);
         }
         if (verify.inputMatches !== true || verify.contextMatches !== null) {
           throw new Error('Signer identity must be NOT CHECKED when no expectation is supplied.');
@@ -836,11 +836,7 @@ export async function runSelfTest() {
         seedBytes: seed,
         signerAddress: '',
       });
-      const verify = await verifyDetachedSignature({
-        signatureDoc: signResult.doc,
-        inputContext: verifyingContext,
-        expectedSigner: signResult.signer,
-      });
+      const verify = await verifyDetachedSignature({ signatureDoc: signResult.doc, expectedSigner: signResult.signer, inputContext: verifyingContext });
 
       if (!verify.valid || !verify.signatureValid || !verify.inputMatches || verify.summary !== 'VALID_WITH_WARNINGS') {
         throw new Error(`Expected valid advisory media-type warning, got: ${verify.details.join(' | ')}`);
@@ -933,7 +929,7 @@ export async function runSelfTest() {
       if (verify.summary !== 'INVALID') throw new Error(`Expected INVALID, got ${verify.summary}.`);
     }),
 
-    ...['', 'stellar-signature/v1', 'stellar-signature/v2', 'stellar-signature/v3 ', 'STELLAR-SIGNATURE/V3'].map((schema) =>
+    ...['', 'stellar-signature/v1', 'stellar-signature/v2', 'stellar-signature/v2 ', 'stellar-signature/v3 ', 'STELLAR-SIGNATURE/V3'].map((schema) =>
       createResult(`strict verifier rejects schema ${JSON.stringify(schema)}`, async () => {
         const { doc, inputContext } = await makeSignedTextFixture('schema strictness regression');
         const verify = await verifyDetachedSignature({
@@ -981,8 +977,8 @@ export async function runSelfTest() {
       });
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
-        inputContext: textContext,
         expectedSigner: signResult.signer,
+        inputContext: textContext,
       });
 
       if (!verify.valid) {
@@ -1000,8 +996,8 @@ export async function runSelfTest() {
       });
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
-        inputContext: fileContext,
         expectedSigner: signResult.signer,
+        inputContext: fileContext,
       });
 
       if (!verify.valid) {
@@ -1034,6 +1030,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badFileContext,
       });
 
@@ -1111,6 +1108,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badTextContext,
       });
 
@@ -1135,6 +1133,7 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: signResult.doc,
+        expectedSigner: signResult.signer,
         inputContext: badFileContext,
       });
 
@@ -1178,8 +1177,8 @@ export async function runSelfTest() {
 
       const verify = await verifyDetachedSignature({
         signatureDoc: xdrDoc.doc,
+        expectedSigner: xdrDoc.signer,
         inputContext: fileContext,
-        expectedSigner: signer,
       });
 
       if (!verify.valid) {
@@ -1298,7 +1297,7 @@ export async function runSelfTest() {
         context
       );
       const malformedTx = fixture.draft.txXdr.slice();
-      const nameBytes = utf8ToBytes(MANIFEST_DATA_NAME);
+      const nameBytes = utf8ToBytes(MANAGE_DATA_NAME.MANIFEST_SHA256);
       const nameOffset = indexOfBytes(malformedTx, nameBytes);
       if (nameOffset < 0) throw new Error('ManageData name not found in test transaction.');
       const padLength = (4 - (nameBytes.length % 4)) % 4;
@@ -1330,7 +1329,7 @@ export async function runSelfTest() {
         '3636363636363636363636363636363636363636363636363636363636363636',
         context
       );
-      const name = utf8ToBytes(MANIFEST_DATA_NAME);
+      const name = utf8ToBytes(MANAGE_DATA_NAME.MANIFEST_SHA256);
       const withName = (nameBytes) => {
         const tx = fixture.draft.txXdr;
         const offset = indexOfBytes(tx, name);

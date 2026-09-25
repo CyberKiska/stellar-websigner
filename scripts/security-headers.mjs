@@ -18,6 +18,7 @@ export const SECURITY_HEADERS = Object.freeze([
   ['Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload'],
   ['X-Frame-Options', 'DENY'],
   ['X-Content-Type-Options', 'nosniff'],
+  ['Cache-Control', 'no-cache'],
   ['Referrer-Policy', 'no-referrer'],
   ['Cross-Origin-Opener-Policy', 'same-origin'],
   ['Cross-Origin-Embedder-Policy', 'require-corp'],

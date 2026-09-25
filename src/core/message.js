@@ -1,6 +1,6 @@
 import { HASH_ALG } from './constants.js';
 
-export function normalizeInputKind(kind) {
+function normalizeInputKind(kind) {
   if (kind === 'file' || kind === 'text') return kind;
   throw new Error('Input type must be file or text.');
 }

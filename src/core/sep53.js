@@ -43,7 +43,7 @@ export async function verifySep53Message({ publicKeyBytes, messageBytes, signatu
 }
 
 export function parseSep53Signature(signatureB64) {
-  const signatureBytes = canonicalBase64ToBytes(String(signatureB64 || ''), { maxBytes: 64 });
+  const signatureBytes = canonicalBase64ToBytes(signatureB64, { maxBytes: 64 });
   if (signatureBytes.length !== 64) {
     throw new Error(`Expected 64-byte signature, got ${signatureBytes.length}.`);
   }

@@ -368,7 +368,8 @@
 
               <div class="form-group">
                 <label for="verify-expected-signer">Expected Signer (optional)</label>
-                <input id="verify-expected-signer" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="G..." />
+                <input id="verify-expected-signer" type="text" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="G..." aria-describedby="verify-signer-help" />
+                <p id="verify-signer-help" class="muted-copy">Use a public key you trust independently. Leaving this blank checks the signature without confirming signer identity.</p>
               </div>
 
               <div class="button-group compact">

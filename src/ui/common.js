@@ -1,4 +1,4 @@
-import { decodeUtf8Strict } from '../core/bytes.js';
+import { decodeUtf8Strict, wipeBytes } from '../core/bytes.js';
 
 export function byId(id) {
   const el = document.getElementById(id);
@@ -68,10 +68,16 @@ export async function readFileText(file, { maxBytes = 256 * 1024 } = {}) {
   if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > maxBytes) {
     throw new Error(`File exceeds the ${maxBytes}-byte limit.`);
   }
-  // Blob.text() would silently drop a BOM and replace invalid UTF-8; reject both instead.
   const bytes = new Uint8Array(await file.arrayBuffer());
-  if (bytes.length > maxBytes) throw new Error(`File exceeds the ${maxBytes}-byte limit.`);
-  return decodeUtf8Strict(bytes);
+  try {
+    if (bytes.length !== file.size || bytes.length > maxBytes) {
+      throw new Error('Signature file size changed while reading.');
+    }
+    // Blob.text() would silently drop a BOM and replace invalid UTF-8; reject both instead.
+    return decodeUtf8Strict(bytes);
+  } finally {
+    wipeBytes(bytes);
+  }
 }
 
 export function appendLog(textarea, message) {

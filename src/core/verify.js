@@ -45,6 +45,8 @@ async function verifyV3({ report, checked, signatureDoc, inputContext, expectedS
       ? ['schema', 'signer', 'protected', 'signatureB64']
       : ['schema', 'signer', 'protected', 'signedXdr'];
   assertExactKeys(signatureDoc, expectedTopKeys, 'signature document');
+  const proofField = proofType === PROOF_TYPE.SEP53_MESSAGE ? 'signatureB64' : 'signedXdr';
+  if (typeof signatureDoc[proofField] !== 'string') throw new Error(`${proofField} must be a string.`);
 
   validateProtectedManifestStructure({
     manifest: signatureDoc.protected,
@@ -157,10 +159,13 @@ function validateSigner({ report, signatureDoc }) {
 }
 
 function validateExpectedSigner({ report, expectedSigner, actualSigner }) {
-  const expected = String(expectedSigner || '').trim();
+  if (typeof expectedSigner !== 'string') {
+    report.contextMismatch('Expected signer must be a string.');
+    return;
+  }
+  const expected = expectedSigner.trim();
   if (!expected) {
-    // A self-asserted signer is not an identity check; leave the context result NOT CHECKED.
-    report.warn('No expected signer was supplied; the signer identity was not checked.');
+    report.warn('No trusted expected signer was supplied. The signature verifies under the document\'s public key; signer identity has not been confirmed.');
     return;
   }
   try {
@@ -230,8 +235,8 @@ function createReport() {
         ? 'INVALID'
         : inputMatches === false || contextMatches === false
           ? 'MISMATCH'
-          : inputMatches !== true || contextMatches !== true
-            ? 'SIGNER_UNVERIFIED'
+          : contextMatches === null
+            ? 'SIGNER_UNCONFIRMED'
             : warnings.length > 0
               ? 'VALID_WITH_WARNINGS'
               : 'VALID';
@@ -271,7 +276,7 @@ export function diagnosticsForDisplay(report) {
     `Result: ${report.summary || (report.valid ? 'VALID' : 'INVALID')}`,
     `Signature Valid: ${report.signatureValid ? 'YES' : 'NO'}`,
     `Selected Input Matches: ${formatCheckState(report.inputMatches)}`,
-    `Expected Signer Matches: ${formatCheckState(report.contextMatches)}`,
+    `Expected Signer Matches: ${report.signatureValid && report.contextMatches === null ? 'NOT SUPPLIED' : formatCheckState(report.contextMatches)}`,
     `Signer${unauthenticated}: ${report.signer || '-'}`,
     `Schema: ${report.checked?.schema || '-'}`,
     `Proof Type: ${report.checked?.proofType || '-'}`,

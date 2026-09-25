@@ -171,8 +171,13 @@
         "sha3_512Hex": "386dd35a45dc62e48f21c90fcc4f8317f0a2ba47cb5910b2d9a697e64c372f7257eaecdd5fd39ca540ab95337202e39ffe36ab7df9b84513ee6ed0df6b0adf31"
       },
       "manageData": {
-        "name": "org.stellar-websigner.manifest.sha256",
-        "valueHex": "106539e60a7ff452e82a67c05641ab38c55152174d451322a7e1de61ccb8eb8f"
+        "entries": [
+          {
+            "name": "org.stellar-websigner.manifest.sha256",
+            "alg": "SHA-256",
+            "valueHex": "106539e60a7ff452e82a67c05641ab38c55152174d451322a7e1de61ccb8eb8f"
+          }
+        ]
       },
       "unsignedXdr": "AAAAAgAAAAAXy3n7K0Eg8rHsZeQZjW4Iso6BP+sB5KQAg5uF4YCAzgAAH0AAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAKAAAAJW9yZy5zdGVsbGFyLXdlYnNpZ25lci5tYW5pZmVzdC5zaGEyNTYAAAAAAAABAAAAIBBlOeYKf/RS6CpnwFZBqzjFUVIXTUUTIqfh3mHMuOuPAAAAAAAAAAA=",
       "txHashHex": "633d9f622eab75625db03cc41f33cc2a5809518f4ae1f7984e16d0f48149816b",
@@ -230,8 +235,13 @@
         "sha3_512Hex": "0b8388f9c7e84c89594847d8578d0e655820a059bd6002c232f6765569e79624d153f8d4d6eb2b0503ba79bc0aef60500721fd23e47a1d3183ef5d5516c50df4"
       },
       "manageData": {
-        "name": "org.stellar-websigner.manifest.sha256",
-        "valueHex": "cd9269c6f14659884095930b40831551a48964749914b9ae4cee9c0fd717536c"
+        "entries": [
+          {
+            "name": "org.stellar-websigner.manifest.sha256",
+            "alg": "SHA-256",
+            "valueHex": "cd9269c6f14659884095930b40831551a48964749914b9ae4cee9c0fd717536c"
+          }
+        ]
       },
       "unsignedXdr": "AAAAAgAAAADGgiY3x9MQ7Fdie+ALolnSU3SfSq9kRHDP++U6NfcyQgAAH0AAAAAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAKAAAAJW9yZy5zdGVsbGFyLXdlYnNpZ25lci5tYW5pZmVzdC5zaGEyNTYAAAAAAAABAAAAIM2SacbxRlmIQJWTC0CDFVGkiWR0mRS5rkzunA/XF1NsAAAAAAAAAAA=",
       "txHashHex": "c760bbb06836e5647bcf6b476849005fe0f65e6c904743f00928daa4b32223a3",

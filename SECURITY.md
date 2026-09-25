@@ -2,15 +2,15 @@
 
 ## Supported formats and assurance
 
-`stellar-signature/v3` is the only supported signature format. Earlier schemas are rejected as unsupported.
+Version 3.0.0 signs and verifies only `stellar-signature/v3`. Earlier signature containers are unsupported and rejected because they do not authenticate all surrounding metadata.
 
 Verification reports three independent decisions:
 
 - `signatureValid`: the signature document, protected protocol profile, and cryptographic proof are valid;
 - `inputMatches`: the selected input type, basename (Unicode NFC), byte size, SHA-256, and SHA3-512 match the authenticated manifest;
-- `contextMatches`: the authenticated signer matches the verifier's expected signer; it is `NOT CHECKED` when no expected signer is supplied.
+- `contextMatches`: the authenticated signer matches the verifier's expected signer; it is null (shown as `NOT SUPPLIED`) when no expected signer is supplied.
 
-Only a result where all three are true is `VALID`. Without an expected signer the result is `SIGNER_UNVERIFIED`: the signer named in a `.sig` is self-asserted and proves only that the holder of that key signed. A cryptographically valid signature for a different input or signer is `MISMATCH`, not `INVALID`. Input and context comparisons are not performed until the manifest has been authenticated, and the signer of a failed proof is labeled as claimed, not authenticated. Any change to the verification inputs clears the displayed result.
+Only a result where all three are true is `VALID`. If the expected signer is absent, `contextMatches` remains null and a matching content signature is `SIGNER_UNCONFIRMED` (shown as `UNCONFIRMED`), never `VALID`: the signer named in a `.sig` is self-asserted and proves only that the holder of that key signed. A cryptographically valid signature for a different input or signer is `MISMATCH`, not `INVALID`. Input and context comparisons are not performed until the manifest has been authenticated, and the signer of a failed proof is labeled as claimed, not authenticated. Any change to the verification inputs clears the displayed result.
 
 The browser-reported file media type is retained as authenticated advisory metadata. A media-type difference produces a warning but does not override matching content digests, basename, and size because `File.type` can vary by user agent and operating system.
 
@@ -32,7 +32,7 @@ The local-secret threat model does not include a compromised browser, extension,
 
 ## Release security gate
 
-Run `npm run check:release` with all pinned Playwright browsers installed. This covers self-tests and startup KATs, vectors, the production build, artifact-manifest verification, browser security behavior (including session-restore persistence with real browser profiles), and dependency audit. Follow `RELEASE-CHECKLIST.md` for deployment checks.
+Run `npm run check:release` with all pinned Playwright browsers installed. This covers self-tests and startup KATs, independent core regressions, vectors, the production build, artifact-manifest verification, browser security behavior (including session-restore persistence with real browser profiles), and dependency audit. Verify the exact upload package again after packaging or transfer, and check the deployed headers and iframe denial before enabling local secrets.
 
 `artifact-manifest.sha256` detects accidental or unauthorized drift only when its expected value is obtained through an independent trusted channel. It is not an authenticity proof when downloaded from the same potentially compromised origin. Maintainer-signed tags and out-of-band signed release attestations remain a separate release provenance step.
 

@@ -296,6 +296,9 @@ export function setupKeysTab(state) {
 
   clearSeedFieldBtn.addEventListener('click', () => {
     seedInput.value = '';
+    seedInput.type = 'password';
+    generatedSeedEl.type = 'password';
+    seedToggle.textContent = 'Show';
     showToast('info', 'Seed input field cleared.');
   });
 
@@ -343,7 +346,6 @@ export function setupKeysTab(state) {
 
   clearBtn.addEventListener('click', () => {
     if (keyOperationBusy) return;
-    if (!state.keys.signerAddress && !state.keys.signingKeySession) return;
 
     if (state.keys.signingKeySession) {
       const prompt = state.keys.seedBytes
@@ -383,6 +385,7 @@ export function setupKeysTab(state) {
   registerSessionWipeHandler(() => {
     wipeSessionSeed({ invalidateOperations: true });
     render();
+    dispatchUpdate();
   });
 
   render();

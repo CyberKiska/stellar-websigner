@@ -2,7 +2,7 @@ import { canonicalBase64ToBytes, bytesEqual, bytesToBase64, concatBytes, utf8ToB
 import { signatureHint, verifyBytesWithPublic } from './ed25519.js';
 import { assertStrictEd25519Signature } from './ed25519-validation.js';
 import { sha256 } from './hash.js';
-import { MANIFEST_DATA_NAME } from './constants.js';
+import { MANAGE_DATA_NAME } from './constants.js';
 
 export const ENVELOPE_TYPE_TX = 2;
 export const OPERATION_TYPE_MANAGE_DATA = 10;
@@ -38,7 +38,7 @@ export function buildUnsignedManifestEnvelope({ sourcePublicKey, manifestDigest,
   txWriter.writeInt32(1); // operation count
   txWriter.writeInt32(0); // operation source account absent
   txWriter.writeInt32(OPERATION_TYPE_MANAGE_DATA);
-  txWriter.writeAsciiString(MANIFEST_DATA_NAME);
+  txWriter.writeAsciiString(MANAGE_DATA_NAME.MANIFEST_SHA256);
   txWriter.writeInt32(1); // dataValue present
   txWriter.writeOpaque(manifestDigest);
   txWriter.writeInt32(0); // tx.ext.v = 0
@@ -84,10 +84,12 @@ export function encodeSignedTxEnvelope({ txXdr, signatures }) {
 }
 
 export function parseTransactionEnvelope(input) {
-  const raw = input instanceof Uint8Array
-    ? new Uint8Array(input)
+  const inputBytes = input instanceof Uint8Array
+    ? input
     : canonicalBase64ToBytes(input, { maxBytes: MAX_XDR_ENVELOPE_BYTES });
-  if (raw.length > MAX_XDR_ENVELOPE_BYTES) throw new Error('XDR envelope is too large.');
+  if (inputBytes.length > MAX_XDR_ENVELOPE_BYTES) throw new Error('XDR envelope is too large.');
+  // Parsing owns a snapshot; caller mutations must not change authenticated bytes.
+  const raw = new Uint8Array(inputBytes);
   const reader = new XdrReader(raw);
 
   const envelopeType = reader.readInt32();
@@ -128,7 +130,7 @@ export function assertManifestProofEnvelope(parsed, expectedManifestDigest) {
   if (op.sourceAccount) {
     throw new Error('Unsafe transaction: operation-level sourceAccount is not allowed.');
   }
-  if (op.body?.dataName !== MANIFEST_DATA_NAME) {
+  if (op.body?.dataName !== MANAGE_DATA_NAME.MANIFEST_SHA256) {
     throw new Error(`Unsupported ManageData name: ${op.body?.dataName}`);
   }
   const value = op.body.dataValue;

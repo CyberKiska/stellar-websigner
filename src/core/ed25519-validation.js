@@ -28,6 +28,7 @@ export function assertStrictEd25519Signature(signatureBytes) {
 
 function decodePoint(encoded, { allowIdentity, requireSubgroup, label }) {
   assertLength(encoded, 32, 'Encoded Ed25519 point');
+  // Uint8Array subclasses such as Node Buffer may implement slice as a view.
   const copy = new Uint8Array(encoded);
   const sign = copy[31] >>> 7;
   copy[31] &= 0x7f;

@@ -63,9 +63,10 @@ export async function generateKeypair(options = {}) {
     if (!bytesEqual(pkcs8.subarray(0, ED25519_PKCS8_PREFIX.length), ED25519_PKCS8_PREFIX)) {
       throw new Error('Unexpected generated Ed25519 PKCS#8 prefix.');
     }
-    const seedBytes = pkcs8.slice(ED25519_PKCS8_PREFIX.length);
     const publicBytes = new Uint8Array(await subtle.exportKey('raw', pair.publicKey));
     assertStrictEd25519PublicKey(publicBytes);
+    // Create the returned secret copy only after all fallible provider checks.
+    const seedBytes = pkcs8.slice(ED25519_PKCS8_PREFIX.length);
     return { seedBytes, publicBytes };
   } finally {
     wipeBytes(pkcs8);

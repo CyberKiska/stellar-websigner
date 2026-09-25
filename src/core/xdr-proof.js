@@ -1,4 +1,4 @@
-import { MANIFEST_DATA_NAME, PROOF_TYPE } from './constants.js';
+import { MANAGE_DATA_NAME, PROOF_TYPE } from './constants.js';
 import { bytesEqual, bytesToBase64, bytesToHexLower } from './bytes.js';
 import { assertStrictEd25519PublicKey } from './ed25519-validation.js';
 import { knownNetworkPassphrases } from './network.js';
@@ -41,7 +41,7 @@ export async function createXdrProofDraft({ inputContext, signerAddress, network
   return Object.freeze({
     operationId: `sha256:${bytesToHexLower(manifestDigest)}`,
     unsignedXdr: txEnvelopeToBase64(unsignedEnvelope.envelopeXdr),
-    dataName: MANIFEST_DATA_NAME,
+    dataName: MANAGE_DATA_NAME.MANIFEST_SHA256,
     txXdr: unsignedEnvelope.txXdr,
     manifestBytes,
     manifestDigest,
@@ -60,7 +60,7 @@ export async function finalizeXdrProof({ inputContext, signedXdr, draft, expecte
   if (!signer || signer !== draft.signerAddress) {
     throw new Error('Active signer does not match the original XDR draft.');
   }
-  if (!String(signedXdr || '').trim()) throw new Error('Paste signed XDR first.');
+  if (typeof signedXdr !== 'string' || !signedXdr) throw new Error('Signed XDR must be a Base64 string.');
 
   const currentManifest = buildProtectedManifest({
     inputContext,
@@ -77,7 +77,7 @@ export async function finalizeXdrProof({ inputContext, signedXdr, draft, expecte
     throw new Error('Protected manifest digest changed after the unsigned XDR was generated.');
   }
 
-  const parsed = parseTransactionEnvelope(String(signedXdr).trim());
+  const parsed = parseTransactionEnvelope(signedXdr);
   if (!bytesEqual(parsed.txXdr, draft.txXdr)) {
     throw new Error('Signed XDR transaction differs from the exact unsigned draft.');
   }
