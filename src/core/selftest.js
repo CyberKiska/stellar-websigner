@@ -4,6 +4,7 @@ import {
   bytesToBase64,
   bytesToHexLower,
   concatBytes,
+  decodeUtf8Strict,
   hexToBytes,
   safeJsonParse,
   utf8ToBytes,
@@ -866,6 +867,16 @@ export async function runSelfTest() {
         'Duplicate JSON member: schema'
       );
       assertThrows(() => safeJsonParse('{"value":1e400}'), 'non-finite');
+      safeJsonParse(`${'['.repeat(16)}${']'.repeat(16)}`, { maxDepth: 16 });
+      assertThrows(() => safeJsonParse(`${'['.repeat(17)}${']'.repeat(17)}`, { maxDepth: 16 }), 'nesting exceeds 16');
+      assertThrows(() => safeJsonParse(`{"a":${'{"a":'.repeat(16)}1${'}'.repeat(16)}}`, { maxDepth: 16 }), 'nesting exceeds 16');
+    }),
+
+    createResult('signature container text must be strict UTF-8 without BOM', async () => {
+      if (decodeUtf8Strict(utf8ToBytes('{"a":"\u00e9"}')) !== '{"a":"\u00e9"}') throw new Error('Valid UTF-8 was not decoded.');
+      assertThrows(() => decodeUtf8Strict(concatBytes(new Uint8Array([0xef, 0xbb, 0xbf]), utf8ToBytes('{}'))), 'byte-order mark');
+      assertThrows(() => decodeUtf8Strict(new Uint8Array([0x7b, 0x22, 0xff, 0x22, 0x7d])), 'not valid UTF-8');
+      assertThrows(() => decodeUtf8Strict(new Uint8Array([0xed, 0xa0, 0x80])), 'not valid UTF-8');
     }),
 
     createResult('v3 protected manifest sign/verify empty text', async () => {

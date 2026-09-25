@@ -1,11 +1,24 @@
 import { assertWellFormedUnicode } from './canonical-json.js';
 
 const textEncoder = new TextEncoder();
+const strictUtf8Decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 export function utf8ToBytes(value) {
   const text = String(value);
   assertWellFormedUnicode(text);
   return textEncoder.encode(text);
+}
+
+// Signature documents must be exactly UTF-8 without a byte-order mark (RFC 8259 section 8.1, RFC 7493).
+export function decodeUtf8Strict(bytes) {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    throw new Error('Text must not start with a byte-order mark.');
+  }
+  try {
+    return strictUtf8Decoder.decode(bytes);
+  } catch {
+    throw new Error('Text is not valid UTF-8.');
+  }
 }
 
 export function bytesToHexLower(bytes) {
@@ -212,7 +225,6 @@ function scanJson(source, maxDepth) {
   }
 
   function parseValue(depth) {
-    if (depth > maxDepth) throw new Error(`JSON nesting exceeds ${maxDepth} levels.`);
     skipWhitespace();
     const token = source[offset];
     if (token === '{') return parseObject(depth + 1);
@@ -230,6 +242,7 @@ function scanJson(source, maxDepth) {
   }
 
   function parseObject(depth) {
+    if (depth > maxDepth) throw new Error(`JSON nesting exceeds ${maxDepth} levels.`);
     offset += 1;
     skipWhitespace();
     const names = new Set();
@@ -259,6 +272,7 @@ function scanJson(source, maxDepth) {
   }
 
   function parseArray(depth) {
+    if (depth > maxDepth) throw new Error(`JSON nesting exceeds ${maxDepth} levels.`);
     offset += 1;
     skipWhitespace();
     if (source[offset] === ']') {

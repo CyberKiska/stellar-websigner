@@ -133,6 +133,14 @@ test('file identity, advisory MIME warning, stale result, and tampered manifest'
   await expect(page.locator('#verify-details')).toHaveValue(/Selected Input Matches: NOT CHECKED/);
   await expect(page.locator('#verify-result-signer-label')).toHaveText('Claimed Signer (not authenticated)');
   await expect(page.locator('#verify-result-checked')).toHaveValue('-');
+  await page.locator('#verify-sig-file').setInputFiles({
+    name: 'report.txt.sig',
+    mimeType: 'application/json',
+    buffer: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(doc))]),
+  });
+  await page.locator('#verify-run').click();
+  await expect(page.locator('#verify-result-badge')).toHaveText('INVALID');
+  await expect(page.locator('#verify-result-message')).toContainText('byte-order mark');
 });
 
 test('external XDR handoff with independent signing, wrong network, and stale output', async ({ page }) => {

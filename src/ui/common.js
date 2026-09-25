@@ -1,3 +1,5 @@
+import { decodeUtf8Strict } from '../core/bytes.js';
+
 export function byId(id) {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing element #${id}`);
@@ -66,7 +68,10 @@ export async function readFileText(file, { maxBytes = 256 * 1024 } = {}) {
   if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > maxBytes) {
     throw new Error(`File exceeds the ${maxBytes}-byte limit.`);
   }
-  return file.text();
+  // Blob.text() would silently drop a BOM and replace invalid UTF-8; reject both instead.
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length > maxBytes) throw new Error(`File exceeds the ${maxBytes}-byte limit.`);
+  return decodeUtf8Strict(bytes);
 }
 
 export function appendLog(textarea, message) {
