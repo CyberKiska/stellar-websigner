@@ -16,3 +16,4 @@ scripts/contract-check.mjs
 !README.md
 !RELEASE-CHECKLIST.md
 !SECURITY.md
+!docs/skills/stellar-websigner/**/*.md

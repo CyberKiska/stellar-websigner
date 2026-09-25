@@ -3,6 +3,8 @@
 
 Static client-only web app for Stellar (Ed25519) content signatures and XDR proofs (`.sig`) using pure HTML/CSS/JS.
 
+For AI-assisted operation, use the repository-local [Stellar WebSigner skill](docs/skills/stellar-websigner/SKILL.md). It contains exact workflows, validation limits, recovery instructions, and a linked code/runtime evidence record.
+
 [Features](#features) | [Architecture](#architecture) | [Development](#development) | [License](#license)
 
 ------------
