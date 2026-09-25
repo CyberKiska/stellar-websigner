@@ -205,6 +205,20 @@ export async function runSelfTest() {
       await assertEd25519RuntimeHealth();
     }),
 
+    createResult('startup Ed25519 KAT rejects a provider that accepts every signature', async () => {
+      const subtle = globalThis.crypto.subtle;
+      const hadOwnVerify = Object.prototype.hasOwnProperty.call(subtle, 'verify');
+      const ownVerifyDescriptor = Object.getOwnPropertyDescriptor(subtle, 'verify');
+      try {
+        Object.defineProperty(subtle, 'verify', { configurable: true, writable: true, value: async () => true });
+        await assertRejects(() => assertEd25519RuntimeHealth(), 'Ed25519 startup verification accepted');
+      } finally {
+        if (hadOwnVerify) Object.defineProperty(subtle, 'verify', ownVerifyDescriptor);
+        else delete subtle.verify;
+      }
+      await assertEd25519RuntimeHealth();
+    }),
+
     createResult('deployment policy disables local secrets on shared or insecure origins', async () => {
       if (localSecretOperationsAllowed({ hostname: 'user.github.io', isSecureContext: true })) {
         throw new Error('Shared GitHub Pages origin must not allow local secret operations.');
