@@ -28,7 +28,7 @@ export function assertStrictEd25519Signature(signatureBytes) {
 
 function decodePoint(encoded, { allowIdentity, requireSubgroup, label }) {
   assertLength(encoded, 32, 'Encoded Ed25519 point');
-  const copy = encoded.slice();
+  const copy = new Uint8Array(encoded);
   const sign = copy[31] >>> 7;
   copy[31] &= 0x7f;
   const y = littleEndianToBigInt(copy);

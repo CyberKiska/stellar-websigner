@@ -84,7 +84,7 @@ export function encodeSignedTxEnvelope({ txXdr, signatures }) {
 
 export function parseTransactionEnvelope(input) {
   const raw = input instanceof Uint8Array
-    ? input
+    ? new Uint8Array(input)
     : canonicalBase64ToBytes(input, { maxBytes: MAX_XDR_ENVELOPE_BYTES });
   if (raw.length > MAX_XDR_ENVELOPE_BYTES) throw new Error('XDR envelope is too large.');
   const reader = new XdrReader(raw);

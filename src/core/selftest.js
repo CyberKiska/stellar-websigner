@@ -601,6 +601,20 @@ export async function runSelfTest() {
       );
     }),
 
+    createResult('core copies never alias or wipe caller buffers (Node Buffer inputs)', async () => {
+      if (typeof Buffer === 'undefined') return;
+      const seed = Buffer.alloc(32, 0x42);
+      await derivePublicKeyFromSeed(seed);
+      (await createSigningKeySession(seed)).destroy();
+      if (seed.some((byte) => byte !== 0x42)) throw new Error('Caller seed buffer was modified.');
+      const publicKey = Buffer.from('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a', 'hex');
+      const original = Buffer.from(publicKey);
+      assertStrictEd25519PublicKey(publicKey);
+      const hint = signatureHint(publicKey);
+      hint.fill(0);
+      if (!publicKey.equals(original)) throw new Error('Caller public key buffer was modified.');
+    }),
+
     createResult('generated signing session rejects a mismatched supplied public key', async () => {
       const seedA = hexToBytes('0303030303030303030303030303030303030303030303030303030303030303');
       const seedB = hexToBytes('0404040404040404040404040404040404040404040404040404040404040404');

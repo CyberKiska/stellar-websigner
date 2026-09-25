@@ -106,8 +106,7 @@ export function base64ToBytes(base64Value) {
 
   if (typeof Buffer !== 'undefined') {
     try {
-      const buf = Buffer.from(normalized, 'base64');
-      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+      return new Uint8Array(Buffer.from(normalized, 'base64'));
     } catch {
       throw new Error('Invalid base64 value.');
     }
