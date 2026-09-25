@@ -42,13 +42,6 @@ export async function verifySep53Message({ publicKeyBytes, messageBytes, signatu
   }
 }
 
-export function readInputContextBytes(inputContext) {
-  if (!(inputContext?.bytes instanceof Uint8Array)) {
-    throw new Error('Strict SEP-53 mode requires input bytes in memory.');
-  }
-  return inputContext.bytes;
-}
-
 export function parseSep53Signature(signatureB64) {
   const signatureBytes = canonicalBase64ToBytes(String(signatureB64 || ''), { maxBytes: 64 });
   if (signatureBytes.length !== 64) {

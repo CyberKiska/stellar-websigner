@@ -1,8 +1,4 @@
-export const SIGNATURE_SCHEMA_V2 = 'stellar-signature/v2';
 export const SIGNATURE_SCHEMA_V3 = 'stellar-signature/v3';
-export const LEGACY_V2_DEPRECATED_SINCE = '2026-08-01';
-export const LEGACY_V2_REMOVAL_NOT_BEFORE = '2027-08-01';
-export const LEGACY_V2_REMOVAL_VERSION = '3.0.0';
 export const SIGNATURE_APPLICATION = 'stellar-websigner';
 export const SIGNATURE_PURPOSE = 'detached-content-authentication';
 export const SEP53_PREFIX = 'Stellar Signed Message:\n';
@@ -27,8 +23,6 @@ export const PROOF_TYPE = Object.freeze({
 });
 
 export const PAYLOAD_TYPE = Object.freeze({
-  RAW_BYTES: 'raw-bytes',
-  DETACHED_DIGESTS: 'detached-digests',
   PROTECTED_MANIFEST: 'protected-manifest',
 });
 
@@ -37,14 +31,5 @@ export const SIGNATURE_SCHEME = Object.freeze({
   TX_ENVELOPE_ED25519: 'tx-envelope-ed25519',
 });
 
-export const MANAGE_DATA_NAME = Object.freeze({
-  SHA256: 'ws.sha256',
-  SHA3_512: 'ws.sha3-512',
-  MANIFEST_SHA256: 'org.stellar-websigner.manifest.sha256',
-});
-
-export const HASH_SELECTION = Object.freeze({
-  BOTH: 'both',
-  SHA256: 'sha256',
-  SHA3_512: 'sha3-512',
-});
+// ManageData name carrying SHA-256 of the canonical protected manifest in the XDR proof profile.
+export const MANIFEST_DATA_NAME = 'org.stellar-websigner.manifest.sha256';

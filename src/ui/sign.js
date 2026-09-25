@@ -1,5 +1,5 @@
 import { registerSessionWipeHandler } from '../app/session-wipe.js';
-import { base64ToBytes, wipeBytes } from '../core/bytes.js';
+import { base64ToBytes } from '../core/bytes.js';
 import { PUBLIC_NETWORK_PASSPHRASE } from '../core/constants.js';
 import {
   createFileInputContext,
@@ -203,14 +203,7 @@ export function setupSignTab(state) {
     throw signal.reason instanceof Error ? signal.reason : makeAbortError();
   }
 
-  function wipeInputBytes(context) {
-    if (context?.bytes instanceof Uint8Array) {
-      wipeBytes(context.bytes);
-    }
-  }
-
   function clearCurrentInputContext() {
-    wipeInputBytes(state.sign.inputContext);
     state.sign.inputContext = null;
     renderDigests(null);
   }
@@ -240,7 +233,7 @@ export function setupSignTab(state) {
     );
   }
 
-  async function buildInputContext({ strict = false, requireBytes = false, signal = null } = {}) {
+  async function buildInputContext({ strict = false, signal = null } = {}) {
     const mode = getInputMode();
     throwIfAborted(signal);
 
@@ -253,7 +246,6 @@ export function setupSignTab(state) {
 
       const context = await createFileInputContext(file, {
         onProgress: setHashProgress,
-        keepBytes: requireBytes,
         signal,
       });
       throwIfAborted(signal);
@@ -268,7 +260,7 @@ export function setupSignTab(state) {
       return null;
     }
     resetHashProgress();
-    return createTextInputContext(text, { keepBytes: requireBytes, signal });
+    return createTextInputContext(text, { signal });
   }
 
   async function refreshDigestContext({ strict = false, silent = false } = {}) {
@@ -277,7 +269,7 @@ export function setupSignTab(state) {
     contextBusy = true;
     updateActionAvailability();
     try {
-      const context = await buildInputContext({ strict, requireBytes: false, signal: controller.signal });
+      const context = await buildInputContext({ strict, signal: controller.signal });
       if (nonce !== refreshNonce) return null;
 
       clearCurrentInputContext();
@@ -365,33 +357,28 @@ export function setupSignTab(state) {
     }
 
     resetOutput();
-    let context = null;
-    try {
-      context = await buildInputContext({ strict: true, requireBytes: false, signal });
-      throwIfAborted(signal);
-      setHashProgress({
-        phase: 'digest',
-        loaded: context.fileSize,
-        total: context.fileSize,
-        message: 'Signing content...',
-      });
-      const result = await createLocalSep53MessageSignature({
-        inputContext: context,
-        signingKeySession,
-        signerAddress: state.keys.signerAddress,
-      });
-      throwIfAborted(signal);
-      if (state.keys.signingKeySession !== signingKeySession || !signingKeySession.active) {
-        throw new Error('Signing key changed during the operation; result discarded.');
-      }
-
-      const signedHashes = result.doc.protected.hashes.map((item) => item.alg).join(', ');
-      setSignatureOutput(result, `Content signature created locally (${signedHashes}).`);
-      appendLog(logEl, `Local SEP-53 content signature created. signer=${result.signer} hashes=${signedHashes}`);
-      showToast('success', 'Content signature created.');
-    } finally {
-      wipeInputBytes(context);
+    const context = await buildInputContext({ strict: true, signal });
+    throwIfAborted(signal);
+    setHashProgress({
+      phase: 'digest',
+      loaded: context.fileSize,
+      total: context.fileSize,
+      message: 'Signing content...',
+    });
+    const result = await createLocalSep53MessageSignature({
+      inputContext: context,
+      signingKeySession,
+      signerAddress: state.keys.signerAddress,
+    });
+    throwIfAborted(signal);
+    if (state.keys.signingKeySession !== signingKeySession || !signingKeySession.active) {
+      throw new Error('Signing key changed during the operation; result discarded.');
     }
+
+    const signedHashes = result.doc.protected.hashes.map((item) => item.alg).join(', ');
+    setSignatureOutput(result, `Content signature created locally (${signedHashes}).`);
+    appendLog(logEl, `Local SEP-53 content signature created. signer=${result.signer} hashes=${signedHashes}`);
+    showToast('success', 'Content signature created.');
   }
 
   async function runXdrDraft() {

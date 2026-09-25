@@ -8,7 +8,7 @@ import {
 } from './bytes.js';
 import { signatureHint, verifyBytesWithPublic } from './ed25519.js';
 import { sha256 } from './hash.js';
-import { MANAGE_DATA_NAME } from './constants.js';
+import { MANIFEST_DATA_NAME } from './constants.js';
 
 export const ENVELOPE_TYPE_TX = 2;
 export const OPERATION_TYPE_MANAGE_DATA = 10;
@@ -19,27 +19,19 @@ const PRECOND_NONE = 0;
 const MEMO_NONE = 0;
 const INT64_MIN = -(1n << 63n);
 const INT64_MAX = (1n << 63n) - 1n;
+const MAX_PROOF_FEE = 100000;
 
-export function buildUnsignedManageDataEnvelope({
-  sourcePublicKey,
-  sequence = 0n,
-  fee = 8000,
-  manageDataEntries,
-  dataName,
-  dataValue,
-}) {
+// The proof profile is one ManageData operation carrying SHA-256 of the protected manifest, with sequence 0
+// so the signed transaction can never be applied on-ledger.
+export function buildUnsignedManifestEnvelope({ sourcePublicKey, manifestDigest, sequence = 0n, fee = 8000 }) {
   if (!(sourcePublicKey instanceof Uint8Array) || sourcePublicKey.length !== 32) {
     throw new Error('sourcePublicKey must be 32 bytes.');
   }
+  if (!(manifestDigest instanceof Uint8Array) || manifestDigest.length !== 32) {
+    throw new Error('Manifest digest must be 32 bytes.');
+  }
   if (!Number.isInteger(fee) || fee <= 0 || fee > 0xffffffff) {
     throw new Error('fee must be uint32 > 0.');
-  }
-  const entries = normalizeManageDataEntries({ manageDataEntries, dataName, dataValue });
-  if (entries.length === 0) {
-    throw new Error('At least one ManageData entry is required.');
-  }
-  if (entries.length > 8) {
-    throw new Error('Too many ManageData entries. Maximum allowed is 8.');
   }
 
   const txWriter = new XdrWriter();
@@ -49,17 +41,12 @@ export function buildUnsignedManageDataEnvelope({
   txWriter.writeInt64(sequence);
   txWriter.writeInt32(PRECOND_NONE);
   txWriter.writeInt32(MEMO_NONE);
-
-  txWriter.writeInt32(entries.length); // operation count
-
-  for (const entry of entries) {
-    txWriter.writeInt32(0); // operation source account absent
-    txWriter.writeInt32(OPERATION_TYPE_MANAGE_DATA);
-    txWriter.writeString(entry.dataName);
-    txWriter.writeInt32(1); // dataValue present
-    txWriter.writeOpaque(entry.dataValue);
-  }
-
+  txWriter.writeInt32(1); // operation count
+  txWriter.writeInt32(0); // operation source account absent
+  txWriter.writeInt32(OPERATION_TYPE_MANAGE_DATA);
+  txWriter.writeString(MANIFEST_DATA_NAME);
+  txWriter.writeInt32(1); // dataValue present
+  txWriter.writeOpaque(manifestDigest);
   txWriter.writeInt32(0); // tx.ext.v = 0
 
   const txXdr = txWriter.finish();
@@ -130,121 +117,34 @@ export function parseTransactionEnvelope(input) {
   };
 }
 
-export function assertSafeManageDataEnvelope(parsed, { expectedDataName, expectedDataValue, expectedEntries } = {}) {
-  if (!parsed?.transaction) {
-    throw new Error('Envelope parse result is missing transaction.');
-  }
-
-  const tx = parsed.transaction;
-
-  if (tx.sequence !== 0n) {
-    throw new Error('Unsafe transaction: sequence must be 0.');
-  }
-
-  if (!Number.isInteger(tx.fee) || tx.fee <= 0 || tx.fee > 100000) {
+export function assertManifestProofEnvelope(parsed, expectedManifestDigest) {
+  const tx = parsed?.transaction;
+  if (!tx) throw new Error('Envelope parse result is missing transaction.');
+  if (tx.sequence !== 0n) throw new Error('Unsafe transaction: sequence must be 0.');
+  if (!Number.isInteger(tx.fee) || tx.fee <= 0 || tx.fee > MAX_PROOF_FEE) {
     throw new Error('Unsafe transaction: fee is outside allowed range.');
   }
-
-  if (!Array.isArray(tx.operations) || tx.operations.length === 0) {
-    throw new Error('Unsafe transaction: at least one operation is required.');
+  if (!Array.isArray(tx.operations) || tx.operations.length !== 1) {
+    throw new Error('Proof transaction must contain exactly one ManageData operation.');
   }
-
-  if (tx.operations.length > 8) {
-    throw new Error('Unsafe transaction: too many operations.');
+  const [op] = tx.operations;
+  if (op.type !== OPERATION_TYPE_MANAGE_DATA) {
+    throw new Error('Unsafe transaction: only ManageData operation is allowed.');
   }
-
-  const manageDataEntries = [];
-  const seenDataNames = new Set();
-  for (const op of tx.operations) {
-    if (op.type !== OPERATION_TYPE_MANAGE_DATA) {
-      throw new Error('Unsafe transaction: only ManageData operation is allowed.');
-    }
-
-    if (op.sourceAccount) {
-      throw new Error('Unsafe transaction: operation-level sourceAccount is not allowed.');
-    }
-
-    if (!op.body?.dataValue || !(op.body.dataValue instanceof Uint8Array)) {
-      throw new Error('ManageData operation must include a non-empty value.');
-    }
-
-    const dataName = String(op.body?.dataName || '');
-    assertSupportedManageDataName(dataName);
-    if (seenDataNames.has(dataName)) {
-      throw new Error(`Duplicate ManageData name in transaction: ${dataName}`);
-    }
-    seenDataNames.add(dataName);
-
-    if (op.body.dataValue.length > 64) {
-      throw new Error('ManageData value exceeds 64 bytes.');
-    }
-    const expectedLength = expectedManageDataLength(dataName);
-    if (op.body.dataValue.length !== expectedLength) {
-      throw new Error(
-        `ManageData value length mismatch for ${dataName}: expected ${expectedLength} bytes, got ${op.body.dataValue.length}.`
-      );
-    }
-
-    manageDataEntries.push({
-      dataName,
-      dataValue: op.body.dataValue,
-    });
+  if (op.sourceAccount) {
+    throw new Error('Unsafe transaction: operation-level sourceAccount is not allowed.');
   }
-
-  if (expectedDataName || expectedDataValue) {
-    if (manageDataEntries.length !== 1) {
-      throw new Error('ManageData transaction shape mismatch: expected single operation.');
-    }
-    const first = manageDataEntries[0];
-
-    if (expectedDataName && first.dataName !== expectedDataName) {
-      throw new Error(`ManageData name mismatch. expected=${expectedDataName} actual=${first.dataName}`);
-    }
-
-    if (expectedDataValue && !bytesEqual(first.dataValue, expectedDataValue)) {
-      throw new Error('ManageData value does not match expected digest bytes.');
-    }
+  if (op.body?.dataName !== MANIFEST_DATA_NAME) {
+    throw new Error(`Unsupported ManageData name: ${op.body?.dataName}`);
   }
-
-  if (Array.isArray(expectedEntries) && expectedEntries.length > 0) {
-    const normalizedExpected = expectedEntries.map((item) => ({
-      dataName: String(item?.dataName || ''),
-      dataValue: item?.dataValue instanceof Uint8Array ? item.dataValue : null,
-    }));
-
-    if (normalizedExpected.length !== manageDataEntries.length) {
-      throw new Error('ManageData operation count does not match expected entries.');
-    }
-
-    const seenExpected = new Set();
-    for (const expected of normalizedExpected) {
-      if (!expected.dataName) {
-        throw new Error('Expected ManageData entry has empty name.');
-      }
-      if (seenExpected.has(expected.dataName)) {
-        throw new Error(`Expected ManageData entries contain duplicate name: ${expected.dataName}`);
-      }
-      seenExpected.add(expected.dataName);
-    }
-
-    const entryMap = new Map(manageDataEntries.map((item) => [item.dataName, item]));
-    for (const expected of normalizedExpected) {
-      const actual = entryMap.get(expected.dataName);
-      if (!actual) {
-        throw new Error(`ManageData name mismatch: missing ${expected.dataName}`);
-      }
-      if (expected.dataValue && !bytesEqual(expected.dataValue, actual.dataValue)) {
-        throw new Error(`ManageData value mismatch for ${expected.dataName}`);
-      }
-    }
+  const value = op.body.dataValue;
+  if (!(value instanceof Uint8Array) || value.length !== 32) {
+    throw new Error('ManageData value must be a 32-byte protected-manifest digest.');
   }
-
-  return {
-    sourceAccount: tx.sourceAccount,
-    dataName: manageDataEntries[0].dataName,
-    dataValue: manageDataEntries[0].dataValue,
-    manageDataEntries,
-  };
+  if (!bytesEqual(value, expectedManifestDigest)) {
+    throw new Error('ManageData value mismatch: the transaction does not bind this protected manifest.');
+  }
+  return { sourceAccount: tx.sourceAccount };
 }
 
 export async function computeTransactionHash(txXdr, networkPassphrase) {
@@ -445,53 +345,6 @@ class XdrWriter {
   }
 }
 
-function normalizeManageDataEntries({ manageDataEntries, dataName, dataValue }) {
-  if (Array.isArray(manageDataEntries)) {
-    const seen = new Set();
-    return manageDataEntries.map((entry, idx) => {
-      const name = String(entry?.dataName || '').trim();
-      const value = entry?.dataValue;
-      if (!name || name.length > 64) {
-        throw new Error(`ManageData name #${idx + 1} must be 1..64 characters.`);
-      }
-      if (seen.has(name)) {
-        throw new Error(`ManageData name #${idx + 1} duplicates previous entry: ${name}`);
-      }
-      seen.add(name);
-      if (!(value instanceof Uint8Array) || value.length === 0 || value.length > 64) {
-        throw new Error(`ManageData value #${idx + 1} must be 1..64 bytes.`);
-      }
-      assertSupportedManageDataName(name);
-      const expectedLength = expectedManageDataLength(name);
-      if (value.length !== expectedLength) {
-        throw new Error(`ManageData value #${idx + 1} must be exactly ${expectedLength} bytes for ${name}.`);
-      }
-      return {
-        dataName: name,
-        dataValue: value,
-      };
-    });
-  }
-
-  if (dataName || dataValue) {
-    const name = String(dataName || '').trim();
-    if (!name || name.length > 64) {
-      throw new Error('ManageData name must be 1..64 characters.');
-    }
-    if (!(dataValue instanceof Uint8Array) || dataValue.length === 0 || dataValue.length > 64) {
-      throw new Error('ManageData value must be 1..64 bytes.');
-    }
-    assertSupportedManageDataName(name);
-    const expectedLength = expectedManageDataLength(name);
-    if (dataValue.length !== expectedLength) {
-      throw new Error(`ManageData value must be exactly ${expectedLength} bytes for ${name}.`);
-    }
-    return [{ dataName: name, dataValue }];
-  }
-
-  return [];
-}
-
 class XdrReader {
   constructor(bytes) {
     this.bytes = bytes;
@@ -556,19 +409,4 @@ class XdrReader {
       throw new Error('XDR contains trailing bytes.');
     }
   }
-}
-
-function assertSupportedManageDataName(name) {
-  if (
-    name !== MANAGE_DATA_NAME.SHA256 &&
-    name !== MANAGE_DATA_NAME.SHA3_512 &&
-    name !== MANAGE_DATA_NAME.MANIFEST_SHA256
-  ) {
-    throw new Error(`Unsupported ManageData name: ${name}`);
-  }
-}
-
-function expectedManageDataLength(name) {
-  if (name === MANAGE_DATA_NAME.SHA256 || name === MANAGE_DATA_NAME.MANIFEST_SHA256) return 32;
-  return 64;
 }

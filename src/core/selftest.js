@@ -20,7 +20,7 @@ import { assertStrictEd25519PublicKey, assertStrictEd25519Signature } from './ed
 import { canonicalJsonStringify } from './canonical-json.js';
 import { assertTopLevelBrowsingContext, localSecretOperationsAllowed } from './deployment-policy.js';
 import { computeDigests, createSha256Stream, createSha3_512Stream, sha256, sha3_512 } from './hash.js';
-import { HASH_ALG, MANAGE_DATA_NAME, PAYLOAD_TYPE, PROOF_TYPE, SIGNATURE_SCHEMA_V2, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
+import { MANIFEST_DATA_NAME, SIGNATURE_SCHEMA_V3, SIGNATURE_SCHEME, TESTNET_NETWORK_PASSPHRASE } from './constants.js';
 import { createLocalSep53MessageSignature } from './signing.js';
 import {
   createFileInputContext,
@@ -33,7 +33,7 @@ import { createXdrProofDraft, finalizeXdrProof } from './xdr-proof.js';
 import { encodeEd25519PublicKey, decodeEd25519PublicKey, decodeEd25519SecretSeed, encodeEd25519SecretSeed } from './strkey.js';
 import { verifyDetachedSignature } from './verify.js';
 import {
-  buildUnsignedManageDataEnvelope,
+  buildUnsignedManifestEnvelope,
   computeTransactionHash,
   encodeSignedTxEnvelope,
   parseTransactionEnvelope,
@@ -51,19 +51,19 @@ async function makeFileContext(name, bytes, options = {}) {
     fileName: name,
     fileSize: bytes.length,
     mediaType: options.mediaType || '',
-    bytes: options.keepBytes === false ? new Uint8Array(0) : bytes,
+    bytes,
     digests,
   };
 }
 
-async function makeTextContext(text, options = {}) {
+async function makeTextContext(text) {
   const bytes = utf8ToBytes(text);
   const digests = await computeDigests(bytes);
   return {
     type: 'text',
     fileName: '',
     fileSize: bytes.length,
-    bytes: options.keepBytes === false ? new Uint8Array(0) : bytes,
+    bytes,
     digests,
   };
 }
@@ -191,25 +191,6 @@ function makeDeterministicBytes(size, seed) {
     out[i] = value >>> 24;
   }
   return out;
-}
-
-function makePlaceholderDigests() {
-  const sha256Bytes = new Uint8Array(32);
-  const sha3Bytes = new Uint8Array(64);
-  return {
-    sha256: {
-      alg: HASH_ALG.SHA256,
-      bytes: sha256Bytes,
-      hex: bytesToHexLower(sha256Bytes),
-      base64: bytesToBase64(sha256Bytes),
-    },
-    sha3_512: {
-      alg: HASH_ALG.SHA3_512,
-      bytes: sha3Bytes,
-      hex: bytesToHexLower(sha3Bytes),
-      base64: bytesToBase64(sha3Bytes),
-    },
-  };
 }
 
 export async function runSelfTest() {
@@ -394,15 +375,14 @@ export async function runSelfTest() {
       const progress = [];
       const streamed = await createFileInputContext(file, {
         chunkSize: 71,
-        keepBytes: false,
         onProgress(item) {
           progress.push(item.phase);
         },
       });
       const expected = await computeDigests(bytes);
 
-      if (streamed.bytes.length !== 0) {
-        throw new Error('Expected digest-only file context to avoid retaining bytes.');
+      if ('bytes' in streamed) {
+        throw new Error('File input context must not retain input bytes.');
       }
       if (streamed.digests.sha256.hex !== expected.sha256.hex) {
         throw new Error('Streamed file SHA-256 digest mismatch.');
@@ -414,15 +394,6 @@ export async function runSelfTest() {
         throw new Error(`Unexpected streamed file progress phases: ${progress.join(',')}.`);
       }
 
-      const buffered = await createFileInputContext(file, { chunkSize: 257, keepBytes: true });
-      if (buffered.bytes.length !== bytes.length) {
-        throw new Error('Expected buffered file context to retain bytes.');
-      }
-      for (let i = 0; i < bytes.length; i += 1) {
-        if (buffered.bytes[i] !== bytes[i]) {
-          throw new Error('Buffered file context byte mismatch.');
-        }
-      }
     }),
 
     createResult('file input context abort wipes active chunk', async () => {
@@ -448,7 +419,6 @@ export async function runSelfTest() {
       try {
         await createFileInputContext(file, {
           chunkSize: 1024,
-          keepBytes: true,
           signal: controller.signal,
           onProgress(item) {
             if (item.phase === 'read') controller.abort();
@@ -488,7 +458,7 @@ export async function runSelfTest() {
           },
         };
         await assertRejects(
-          () => createFileInputContext(file, { chunkSize: 32, keepBytes: true }),
+          () => createFileInputContext(file, { chunkSize: 32 }),
           'File read returned'
         );
       }
@@ -532,55 +502,6 @@ export async function runSelfTest() {
       });
       setTimeout(() => controller.abort(), 0);
       await assertRejects(() => pending, 'aborted');
-    }),
-
-    createResult('SEP-53 local signing avoids duplicate input buffer', async () => {
-      if (typeof process === 'undefined' || typeof process.memoryUsage !== 'function') {
-        return;
-      }
-
-      const size = 64 * 1024 * 1024;
-      const bytes = new Uint8Array(size);
-      for (let i = 0; i < bytes.length; i += 4096) {
-        bytes[i] = (i >>> 12) & 0xff;
-      }
-
-      const seed = hexToBytes('2222222222222222222222222222222222222222222222222222222222222222');
-      const inputContext = {
-        type: 'file',
-        fileName: 'large-sep53-memory.bin',
-        fileSize: bytes.length,
-        fileLastModified: 0,
-        bytes,
-        digests: makePlaceholderDigests(),
-      };
-
-      globalThis.gc?.();
-      const before = process.memoryUsage();
-      const result = await createLocalSep53MessageSignature({
-        inputContext,
-        seedBytes: seed,
-        signerAddress: '',
-      });
-      const after = process.memoryUsage();
-
-      if (!result.signatureB64 || result.signatureB64.length === 0) {
-        throw new Error('Expected large SEP-53 signature output.');
-      }
-
-      const heapDelta = after.heapUsed - before.heapUsed;
-      const heapLimit = 24 * 1024 * 1024;
-      if (heapDelta > heapLimit) {
-        throw new Error(`SEP-53 signing heap delta too high: ${heapDelta} bytes.`);
-      }
-
-      if (Number.isFinite(before.arrayBuffers) && Number.isFinite(after.arrayBuffers)) {
-        const arrayBufferDelta = after.arrayBuffers - before.arrayBuffers;
-        const arrayBufferLimit = 16 * 1024 * 1024;
-        if (arrayBufferDelta > arrayBufferLimit) {
-          throw new Error(`SEP-53 signing ArrayBuffer delta too high: ${arrayBufferDelta} bytes.`);
-        }
-      }
     }),
 
     createResult('strkey roundtrip', async () => {
@@ -788,39 +709,6 @@ export async function runSelfTest() {
       }
     }),
 
-    createResult('v2 content-only compatibility is explicit and warning-labeled', async () => {
-      const seed = hexToBytes('1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30');
-      const context = await makeTextContext('legacy content-only payload');
-      const publicBytes = await derivePublicKeyFromSeed(seed);
-      const signer = encodeEd25519PublicKey(publicBytes);
-      const signed = await signSep53Message({ seedBytes: seed, messageBytes: context.bytes });
-      const doc = {
-        schema: SIGNATURE_SCHEMA_V2,
-        signer,
-        proofType: PROOF_TYPE.SEP53_MESSAGE,
-        payloadType: PAYLOAD_TYPE.RAW_BYTES,
-        signatureScheme: SIGNATURE_SCHEME.SEP53_SHA256_ED25519,
-        input: { type: 'text', size: context.fileSize },
-        hashes: [
-          { alg: HASH_ALG.SHA256, hex: context.digests.sha256.hex },
-          { alg: HASH_ALG.SHA3_512, hex: context.digests.sha3_512.hex },
-        ],
-        signatureB64: signed.signatureB64,
-      };
-      const verify = await verifyDetachedSignature({ signatureDoc: doc, inputContext: context, expectedSigner: signer });
-      if (!verify.valid || !verify.warnings.some((line) => line.includes('Legacy v2 compatibility'))) {
-        throw new Error(`Expected valid warning-labeled v2 compatibility result: ${verify.details.join(' | ')}`);
-      }
-      const smuggled = {
-        ...doc,
-        hashes: [{ ...doc.hashes[0], ignored: true }, doc.hashes[1]],
-      };
-      const rejected = await verifyDetachedSignature({ signatureDoc: smuggled, inputContext: context });
-      if (rejected.valid || !rejected.errors.some((line) => line.includes('missing or unknown fields'))) {
-        throw new Error(`Expected unknown legacy hash field rejection: ${rejected.details.join(' | ')}`);
-      }
-    }),
-
     createResult('v3 protected manifest binds exact filename', async () => {
       const seed = hexToBytes('1313131313131313131313131313131313131313131313131313131313131313');
       const fileContext = await makeFileContext('proof.bin', utf8ToBytes('Strict SEP-53 raw file bytes'));
@@ -968,7 +856,7 @@ export async function runSelfTest() {
       if (verify.summary !== 'INVALID') throw new Error(`Expected INVALID, got ${verify.summary}.`);
     }),
 
-    ...['', 'stellar-signature/v1', 'stellar-signature/v2 ', 'STELLAR-SIGNATURE/V2'].map((schema) =>
+    ...['', 'stellar-signature/v1', 'stellar-signature/v2', 'stellar-signature/v3 ', 'STELLAR-SIGNATURE/V3'].map((schema) =>
       createResult(`strict verifier rejects schema ${JSON.stringify(schema)}`, async () => {
         const { doc, inputContext } = await makeSignedTextFixture('schema strictness regression');
         const verify = await verifyDetachedSignature({
@@ -1215,11 +1103,7 @@ export async function runSelfTest() {
     createResult('XDR hyper sequence uses signed two-complement int64 semantics', async () => {
       const sourcePublicKey = new Uint8Array(32);
       const dataValue = new Uint8Array(32);
-      const build = (sequence) => buildUnsignedManageDataEnvelope({
-        sourcePublicKey,
-        sequence,
-        manageDataEntries: [{ dataName: MANAGE_DATA_NAME.MANIFEST_SHA256, dataValue }],
-      });
+      const build = (sequence) => buildUnsignedManifestEnvelope({ sourcePublicKey, sequence, manifestDigest: dataValue });
 
       for (const sequence of [-(1n << 63n), -1n, 0n, (1n << 63n) - 1n]) {
         const parsed = parseTransactionEnvelope(build(sequence).envelopeXdr);
@@ -1327,7 +1211,7 @@ export async function runSelfTest() {
         context
       );
       const malformedTx = fixture.draft.txXdr.slice();
-      const nameBytes = utf8ToBytes(MANAGE_DATA_NAME.MANIFEST_SHA256);
+      const nameBytes = utf8ToBytes(MANIFEST_DATA_NAME);
       const nameOffset = indexOfBytes(malformedTx, nameBytes);
       if (nameOffset < 0) throw new Error('ManageData name not found in test transaction.');
       const padLength = (4 - (nameBytes.length % 4)) % 4;
